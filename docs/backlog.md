@@ -8,8 +8,8 @@ What is not done, and why. Delete an entry when it ships.
   pieces were checked by hand in a throwaway container on 2026-11-07 (yt-dlp
   2026.10.26 with Deno: a YouTube Music song search, and a format-140 AAC
   download of the matching length), and the matching rules have tests that fail
-  when each rule is broken. The worker's process handling, the rename into
-  place and the cover fetch have only run once deployed.
+  when each rule is broken. The worker's process handling, the rename into place
+  and the cover fetch have only run once deployed.
 - **On a real iPad:** background play with the screen off, the service-worker
   audio cache (206 slices), the 5-second + hold, whether a tile tap starts sound
   right away (iOS only allows play inside a tap; songs are fetched ahead so the
@@ -37,10 +37,24 @@ What is not done, and why. Delete an entry when it ships.
 - **A restart drops the fetch queue.** Nothing resumes on its own; the next
   "Check for new songs" (or added playlist) queues what is still missing.
 
+## Known gaps
+
+- **A song being retried shows twice in the Downloads card.** During "Check for
+  new songs", `parents_status`-style output in `http.rs` lists
+  `Fetcher::status`'s queued songs and its failures, and `retry_failed` keeps
+  the failure record until the retry ends, so one song appears as both
+  "downloading" and "not found". Seen in `/api/parents/status` output; cosmetic,
+  and it clears when the retry ends. The fix is to skip failures whose id is
+  queued.
+- **Moana's score demos stay not found:** Maui Battles, Cavern, It's Called
+  Wayfinding, Maui Leaves and Sea Monsters, all "Score Demo" by Mark Mancina.
+  Every search came back without a match; that they are not on YouTube at all is
+  a guess.
+
 ## Considered and declined
 
-- **Torrents through Lidarr and Prowlarr** (the first design): albums rather than
-  songs, so a playlist pulled whole soundtracks and still missed singles,
+- **Torrents through Lidarr and Prowlarr** (the first design): albums rather
+  than songs, so a playlist pulled whole soundtracks and still missed singles,
   compilation-only tracks and demos; soundtrack catalogue names never matched
   release names; Lidarr's metadata server and Spotify lists were unreliable, and
   public indexers carry malware. Replaced by per-song YouTube fetching.
