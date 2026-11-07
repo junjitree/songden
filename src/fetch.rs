@@ -20,7 +20,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::{process::Command, sync::mpsc};
+use tokio::{
+    process::Command,
+    sync::{Semaphore, mpsc},
+    task::JoinSet,
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -35,6 +39,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
 const SEARCH_RESULTS: u32 = 6;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(120);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+/// Songs fetched side by side. Kept low on purpose: many parallel requests from
+/// one home address is what trips YouTube's bot checks, which then stop every
+/// download for a while.
+const PARALLEL_FETCHES: usize = 3;
 const TAG_TIMEOUT: Duration = Duration::from_secs(60);
 /// How far a result's length may be from Spotify's: this many seconds, or this
 /// share of the song if that is more.
@@ -322,7 +330,7 @@ impl Fetcher {
             failures: failures.clone(),
             queued: queued.clone(),
         };
-        tokio::spawn(worker.run(rx));
+        tokio::spawn(Arc::new(worker).run(rx));
         Self {
             tx,
             failures,
@@ -370,6 +378,7 @@ impl Fetcher {
     }
 }
 
+#[derive(Clone)]
 struct Worker {
     library: Library,
     ytdlp: String,
@@ -379,7 +388,7 @@ struct Worker {
 }
 
 impl Worker {
-    async fn run(self, mut rx: mpsc::UnboundedReceiver<Vec<Track>>) {
+    async fn run(self: Arc<Self>, mut rx: mpsc::UnboundedReceiver<Vec<Track>>) {
         while let Some(first) = rx.recv().await {
             let mut batch: Vec<Track> = first;
             while let Ok(more) = rx.try_recv() {
@@ -427,16 +436,35 @@ impl Worker {
                     q.insert(t.id().unwrap_or_default().to_string(), t.clone());
                 }
             }
+            // up to PARALLEL_FETCHES at once; the batch finishes before the next
+            let slots = Arc::new(Semaphore::new(PARALLEL_FETCHES));
+            let mut running = JoinSet::new();
             for track in todo {
-                let id = track.id().unwrap_or_default().to_string();
-                match self.fetch(&track, &id).await {
-                    Ok(()) => self.forget_failure(&id),
-                    Err(err) => self.fail(&track, &id, &err.to_string()),
-                }
-                if let Ok(mut q) = self.queued.lock() {
-                    q.remove(&id);
+                let worker = self.clone();
+                let slots = slots.clone();
+                running.spawn(async move {
+                    let Ok(_slot) = slots.acquire_owned().await else {
+                        return;
+                    };
+                    worker.fetch_one(track).await;
+                });
+            }
+            while let Some(done) = running.join_next().await {
+                if let Err(err) = done {
+                    warn!("fetch: a song's task failed: {err}");
                 }
             }
+        }
+    }
+
+    async fn fetch_one(&self, track: Track) {
+        let id = track.id().unwrap_or_default().to_string();
+        match self.fetch(&track, &id).await {
+            Ok(()) => self.forget_failure(&id),
+            Err(err) => self.fail(&track, &id, &err.to_string()),
+        }
+        if let Ok(mut q) = self.queued.lock() {
+            q.remove(&id);
         }
     }
 

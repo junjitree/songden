@@ -44,6 +44,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Downloaded songs carry their title, artists, album, year and cover in the file
   (written with ffmpeg), so the folder works as a Jellyfin music library too.
   Songs fetched before this are tagged on the next "Check for new songs".
+- Up to three songs are fetched at once (deliberately few: many parallel
+  requests from one home address trips YouTube's bot checks).
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
