@@ -33,6 +33,13 @@ What is not done, and why. Delete an entry when it ships.
   takes about a minute before its albums are known. Fine once; slow for a big
   first import.
 
+- **State files are world-readable inside the container** (`sessions.json` holds
+  live session tokens). Only matters if something else shares the state
+  directory; writing them `0600` would close it.
+- **A restart drops in-flight downloads work.** The album lookups already done
+  are kept (`track-albums.json`), and the rest resumes on the next playlist
+  refresh, but nothing resumes on its own after a restart.
+
 ## Considered and declined
 
 - **Discovering playlists from a Spotify profile** (anything named "<Listener>
