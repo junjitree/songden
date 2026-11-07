@@ -48,6 +48,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so Lidarr accepts their releases; it refused every one with "Artist is not
   monitored". For a self-titled album the release must name the album's year, so
   the artist's other albums are not offered in its place.
+- A release must have the album's name followed by the usual extras (soundtrack,
+  edition, a year, the format), not more title: "Frozen Planet II" is not
+  offered for "Frozen". "Check for new songs" also retries downloads that
+  vanished from Lidarr's queue. Indexer searches may take up to four minutes, so
+  a slow indexer doesn't fail the whole search.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and

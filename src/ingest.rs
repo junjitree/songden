@@ -48,6 +48,9 @@ const FALLBACK_TRIES: usize = 3;
 const MIN_OVERLAP: f64 = 0.6;
 /// Lidarr's API answers slowly while it talks to its metadata server.
 const API_TIMEOUT: Duration = Duration::from_secs(90);
+/// A Prowlarr search waits for its slowest indexer (TorrentDownload has taken
+/// over two minutes for a handful of searches).
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(240);
 /// A release naming one of these is another language's edition, unless the album does.
 const LANGUAGES: &[&str] = &[
     "russian",
@@ -411,12 +414,12 @@ impl Ingester {
         let (tx, rx) = mpsc::unbounded_channel();
         let worker = Worker {
             lidarr: Arr {
-                client: client.clone(),
+                client,
                 url: cfg.lidarr_url,
                 key: cfg.lidarr_key,
             },
             prowlarr: Arr {
-                client,
+                client: reqwest::Client::builder().timeout(SEARCH_TIMEOUT).build()?,
                 url: cfg.prowlarr_url.clone(),
                 key: cfg.prowlarr_key,
             },
