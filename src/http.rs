@@ -34,11 +34,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/audio/{id}", get(audio))
         .route("/api/cover/{id}", get(song_cover))
         .route("/api/parents/status", get(parents_status))
-        .route("/api/parents/refresh", post(refresh))
         .route("/api/settings", get(get_settings))
         .route("/api/parents/settings", put(put_settings))
         .route("/api/parents/playlists", post(add_playlist))
         .route("/api/parents/playlists/{id}", delete(remove_playlist))
+        .route("/api/parents/playlists/{id}/check", post(check_playlist))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_session,
@@ -140,7 +140,7 @@ fn checked_id(id: &str) -> Result<&str> {
 async fn playlists(State(state): State<AppState>) -> Json<Value> {
     let tiles: Vec<Value> = state
         .playlists
-        .all(false)
+        .all()
         .await
         .into_iter()
         .map(|(id, p)| match p {
@@ -251,7 +251,7 @@ async fn song_cover(
 async fn parents_status(State(state): State<AppState>) -> Json<Value> {
     let lists: Vec<Value> = state
         .playlists
-        .all(false)
+        .all()
         .await
         .into_iter()
         .map(|(id, p)| match p {
@@ -277,9 +277,18 @@ async fn parents_status(State(state): State<AppState>) -> Json<Value> {
 /// The grown-ups' "check now": retry songs not found, re-read every playlist
 /// from Spotify (which hands songs not on disk to the fetcher), and answer with
 /// the fresh status.
-async fn refresh(State(state): State<AppState>) -> Result<Json<Value>> {
+/// One playlist's part of "Check for new songs": reads it from Spotify and retries
+/// its songs not found. The page asks for each in turn, to show each one's result.
+async fn check_playlist(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = checked_id(&id)?;
+    if !state.playlists.has(id) {
+        return Err(Error::NotFound);
+    }
     state.fetcher.retry_failed()?;
-    state.playlists.all(true).await;
+    state.playlists.read_spotify(id).await?;
     Ok(parents_status(State(state)).await)
 }
 

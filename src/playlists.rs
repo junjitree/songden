@@ -1,7 +1,7 @@
 //! The playlist links, and each playlist matched against the songs on disk.
 //!
-//! Spotify is read only when a grown-up adds a playlist or asks for a check
-//! (`force`), never on its own: the listener's playlists change when a grown-up
+//! Spotify is read only when a grown-up adds a playlist or asks for a check,
+//! never on its own: the listener's playlists change when a grown-up
 //! decides. Each playlist's song list is kept (`playlists-spotify.json`); songs
 //! not on disk yet are handed to the fetcher at that moment.
 //!
@@ -142,8 +142,8 @@ impl Playlists {
         kept.save()
     }
 
-    /// The playlist with what's on disk. `force` (a grown-up's check, or a
-    /// playlist never read) reads Spotify first.
+    /// The playlist with what's on disk. `force` (adding a playlist) reads Spotify
+    /// first; so does a playlist not read yet.
     pub async fn get(&self, id: &str, force: bool) -> Option<Resolved> {
         let known = self.from_spotify.lock().ok()?.data.contains_key(id);
         if (force || !known)
@@ -157,7 +157,7 @@ impl Playlists {
 
     /// Reads the playlist from Spotify, keeps it, and hands its songs to the
     /// fetcher, which fetches those not on disk and tags any not tagged yet.
-    async fn read_spotify(&self, id: &str) -> Result<()> {
+    pub async fn read_spotify(&self, id: &str) -> Result<()> {
         info!("playlist {id}: reading Spotify");
         let raw = self.spotify.playlist(id).await?;
         let missing: Vec<Track> = raw
@@ -218,11 +218,11 @@ impl Playlists {
         }
     }
 
-    /// Every playlist in order; `force` re-reads each from Spotify now.
-    pub async fn all(&self, force: bool) -> Vec<(String, Option<Resolved>)> {
+    /// Every playlist in order.
+    pub async fn all(&self) -> Vec<(String, Option<Resolved>)> {
         let mut out = Vec::new();
         for id in self.ids() {
-            let p = self.get(&id, force).await;
+            let p = self.get(&id, false).await;
             out.push((id, p));
         }
         out

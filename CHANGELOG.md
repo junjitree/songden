@@ -20,10 +20,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   finger and opens once released past the middle of the screen; Back closes it.
 - The screen stays on while music plays (Screen Wake Lock) and may sleep again
   when paused.
-- A "Check for new songs" button on the grown-ups' page: re-reads every playlist
-  from Spotify at once and retries songs that were not found. Spotify is read
-  only then and when a playlist is added; songs that finish downloading appear
-  by themselves.
+- A "Check for new songs" button on the grown-ups' page: re-reads each playlist
+  from Spotify in turn and retries songs that were not found, with a check mark
+  beside each playlist's name that becomes a loader while it is read (a warning
+  if that failed). Spotify is read only then and when a playlist is added; songs
+  that finish downloading appear by themselves.
 - The app's lion logo in the title bar instead of an emoji.
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
   playlist by its share link, remove one with a confirming second tap, see how
