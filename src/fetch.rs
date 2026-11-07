@@ -14,11 +14,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{
@@ -34,11 +33,6 @@ use crate::{
     store::JsonStore,
     text::norm,
 };
-
-/// "(Original Motion Picture Soundtrack)" and the like, dropped from an album
-/// name before it is searched with.
-static BRACKETED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\s*[(\[][^)\]]*[)\]]").expect("valid regex"));
 
 const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
 /// Results looked at per search.
@@ -791,8 +785,8 @@ impl Worker {
 
 /// The searches tried for a song, in order, until one finds it: YouTube Music
 /// songs by title and singer, then by title and album (a film song's singers
-/// can be crowded out by covers, while the film's name finds the real one),
-/// then plain YouTube by title and singer.
+/// can be crowded out by covers, while its soundtrack's name finds the real
+/// one), then plain YouTube by title and singer.
 fn searches(track: &Track, album: Option<&str>) -> Result<Vec<String>> {
     let music = |query: &str| {
         reqwest::Url::parse_with_params("https://music.youtube.com/search", &[("q", query)])
@@ -804,7 +798,15 @@ fn searches(track: &Track, album: Option<&str>) -> Result<Vec<String>> {
     };
     let by_singer = format!("{} {}", track.title, track.first_artist());
     let mut out = vec![music(&by_singer)?];
-    let album = album.map(|a| BRACKETED.replace_all(a, "").trim().to_string());
+    // "Moana (Original Motion Picture Soundtrack/Deluxe Edition)": the words find
+    // the song, while an edition after the slash loses it again
+    let album = album.map(|a| {
+        let name = a.split('/').next().unwrap_or(a);
+        name.replace(['(', ')', '[', ']'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
     if let Some(album) = album.filter(|a| !a.is_empty() && norm(a) != norm(&track.title)) {
         out.push(music(&format!("{} {album}", track.title))?);
     }
@@ -839,7 +841,7 @@ mod tests {
         assert_eq!(tries.len(), 3);
         assert!(tries[0].contains("Cravalho"), "{tries:?}");
         assert!(
-            tries[1].starts_with("https://music.youtube.com/search?q=Know+Who+You+Are+Moana#songs"),
+            tries[1].starts_with("https://music.youtube.com/search?q=Know+Who+You+Are+Moana+Original+Motion+Picture+Soundtrack#songs"),
             "{tries:?}"
         );
         assert!(tries[2].starts_with("ytsearch"), "{tries:?}");
