@@ -14,10 +14,11 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{
@@ -33,6 +34,11 @@ use crate::{
     store::JsonStore,
     text::norm,
 };
+
+/// "(Original Motion Picture Soundtrack)" and the like, dropped from an album
+/// name before it is searched with.
+static BRACKETED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*[(\[][^)\]]*[)\]]").expect("valid regex"));
 
 const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
 /// Results looked at per search.
@@ -557,17 +563,14 @@ impl Worker {
     }
 
     async fn fetch(&self, track: &Track, id: &str) -> Result<()> {
-        let query = format!("{} {}", track.title, track.first_artist());
-        let music =
-            reqwest::Url::parse_with_params("https://music.youtube.com/search", &[("q", &query)])
-                .map(|mut u| {
-                    u.set_fragment(Some("songs"));
-                    u.to_string()
-                })
-                .map_err(|e| Error::Internal(e.to_string()))?;
-        let plain = format!("ytsearch{SEARCH_RESULTS}:{query}");
+        // read once: its album helps the search, and its cover and tags are
+        // written after the download
+        let page = self.spotify.track_page(track).await.unwrap_or_else(|err| {
+            warn!("fetch: no song page for {:?}: {err}", track.title);
+            Default::default()
+        });
         let mut picked = None;
-        for search in [music, plain] {
+        for search in searches(track, page.album.as_deref())? {
             let candidates = self.search(&search).await?;
             if let Some(c) = choose(track, &candidates) {
                 picked = Some(c.clone());
@@ -587,7 +590,7 @@ impl Worker {
             "tagged": false,
         });
         self.write_source(id, &source)?;
-        self.describe(track, id).await
+        self.describe_with(track, id, &page).await
     }
 
     fn source_path(&self, id: &str) -> PathBuf {
@@ -614,6 +617,11 @@ impl Worker {
             warn!("fetch: no song page for {:?}: {err}", track.title);
             Default::default()
         });
+        self.describe_with(track, id, &page).await
+    }
+
+    /// `describe`, with the song's page already read.
+    async fn describe_with(&self, track: &Track, id: &str, page: &TrackPage) -> Result<()> {
         let cover = self.library.dir.join(format!("{id}.jpg"));
         if let Some(url) = &page.cover {
             match self.spotify.image_bytes(url).await {
@@ -621,7 +629,7 @@ impl Worker {
                 Err(err) => warn!("fetch: no cover for {:?}: {err}", track.title),
             }
         }
-        match self.tag(id, track, &page).await {
+        match self.tag(id, track, page).await {
             Ok(()) => {
                 let mut source = std::fs::read(self.source_path(id))
                     .ok()
@@ -781,6 +789,29 @@ impl Worker {
     }
 }
 
+/// The searches tried for a song, in order, until one finds it: YouTube Music
+/// songs by title and singer, then by title and album (a film song's singers
+/// can be crowded out by covers, while the film's name finds the real one),
+/// then plain YouTube by title and singer.
+fn searches(track: &Track, album: Option<&str>) -> Result<Vec<String>> {
+    let music = |query: &str| {
+        reqwest::Url::parse_with_params("https://music.youtube.com/search", &[("q", query)])
+            .map(|mut u| {
+                u.set_fragment(Some("songs"));
+                u.to_string()
+            })
+            .map_err(|e| Error::Internal(e.to_string()))
+    };
+    let by_singer = format!("{} {}", track.title, track.first_artist());
+    let mut out = vec![music(&by_singer)?];
+    let album = album.map(|a| BRACKETED.replace_all(a, "").trim().to_string());
+    if let Some(album) = album.filter(|a| !a.is_empty() && norm(a) != norm(&track.title)) {
+        out.push(music(&format!("{} {album}", track.title))?);
+    }
+    out.push(format!("ytsearch{SEARCH_RESULTS}:{by_singer}"));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,6 +826,26 @@ mod tests {
             explicit: false,
             seconds,
         }
+    }
+
+    #[test]
+    fn a_film_song_is_also_searched_by_its_album() {
+        let song = track("Know Who You Are", "Auli'i Cravalho", 72);
+        let tries = searches(
+            &song,
+            Some("Moana (Original Motion Picture Soundtrack/Deluxe Edition)"),
+        )
+        .unwrap();
+        assert_eq!(tries.len(), 3);
+        assert!(tries[0].contains("Cravalho"), "{tries:?}");
+        assert!(
+            tries[1].starts_with("https://music.youtube.com/search?q=Know+Who+You+Are+Moana#songs"),
+            "{tries:?}"
+        );
+        assert!(tries[2].starts_with("ytsearch"), "{tries:?}");
+        // no album, or a single named after the song: nothing new to search by
+        assert_eq!(searches(&song, None).unwrap().len(), 2);
+        assert_eq!(searches(&song, Some("Know Who You Are")).unwrap().len(), 2);
     }
 
     fn found(title: &str, seconds: Option<u64>) -> Candidate {
