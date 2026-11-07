@@ -382,6 +382,48 @@ impl Fetcher {
     }
 }
 
+/// What a yt-dlp run printed, and its last error line if it failed.
+pub struct YtdlpRun {
+    pub stdout: String,
+    pub error: Option<String>,
+}
+
+/// Runs yt-dlp, returning its output whether or not it succeeded; only failing
+/// to start it, or it running past `timeout`, is an error here.
+pub async fn run_ytdlp(program: &str, args: &[&str], timeout: Duration) -> Result<YtdlpRun> {
+    let run = Command::new(program)
+        .args(["--no-update", "--no-warnings"])
+        .args(args)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(timeout, run)
+        .await
+        .map_err(|_| Error::Upstream("yt-dlp timed out".into()))?
+        .map_err(|e| Error::Internal(format!("could not run yt-dlp: {e}")))?;
+    let error = (!out.status.success()).then(|| {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("failed")
+            .to_string()
+    });
+    Ok(YtdlpRun {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        error,
+    })
+}
+
+/// Search results from yt-dlp's `--dump-json` lines.
+pub fn parse_candidates(stdout: &str) -> Vec<Candidate> {
+    stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|v| Candidate::from_json(&v))
+        .collect()
+}
+
 #[derive(Clone)]
 struct Worker {
     library: Library,
@@ -652,57 +694,45 @@ impl Worker {
         Ok(())
     }
 
+    /// Runs yt-dlp; an error unless it succeeded.
     async fn ytdlp(&self, args: &[&str], timeout: Duration) -> Result<String> {
-        let run = Command::new(&self.ytdlp)
-            .args(["--no-update", "--no-warnings"])
-            .args(args)
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output();
-        let out = tokio::time::timeout(timeout, run)
-            .await
-            .map_err(|_| Error::Upstream("yt-dlp timed out".into()))?
-            .map_err(|e| Error::Internal(format!("could not run yt-dlp: {e}")))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let last = err
-                .lines()
-                .rev()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("");
-            return Err(Error::Upstream(format!("yt-dlp: {last}")));
+        let run = run_ytdlp(&self.ytdlp, args, timeout).await?;
+        match run.error {
+            None => Ok(run.stdout),
+            Some(err) => Err(Error::Upstream(format!("yt-dlp: {err}"))),
         }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     /// Search results with their lengths (a full lookup per result, so the
     /// length is known).
     async fn search(&self, search: &str) -> Result<Vec<Candidate>> {
         let end = SEARCH_RESULTS.to_string();
-        let out = self
-            .ytdlp(
-                &[
-                    "--dump-json",
-                    "--skip-download",
-                    "--ignore-errors",
-                    "--playlist-end",
-                    &end,
-                    search,
-                ],
-                SEARCH_TIMEOUT,
-            )
-            .await
-            .or_else(|err| match err {
-                // --ignore-errors still exits non-zero when one result fails;
-                // the others are on stdout either way
-                Error::Upstream(_) => Ok(String::new()),
-                other => Err(other),
-            })?;
-        Ok(out
-            .lines()
-            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-            .filter_map(|v| Candidate::from_json(&v))
-            .collect())
+        let run = run_ytdlp(
+            &self.ytdlp,
+            &[
+                "--dump-json",
+                "--skip-download",
+                "--ignore-errors",
+                "--playlist-end",
+                &end,
+                search,
+            ],
+            SEARCH_TIMEOUT,
+        )
+        .await?;
+        // One unavailable result makes yt-dlp exit with an error even with
+        // --ignore-errors, while the others are already printed: keep those.
+        let found = parse_candidates(&run.stdout);
+        if let Some(err) = run.error {
+            if found.is_empty() {
+                return Err(Error::Upstream(format!("yt-dlp: {err}")));
+            }
+            info!(
+                "fetch: search {search:?} partly failed ({err}); using {} results",
+                found.len()
+            );
+        }
+        Ok(found)
     }
 
     /// Downloads the audio to `.part-<id>.<ext>`, then renames it into place so a
@@ -819,6 +849,51 @@ mod tests {
             &tagalog,
             &found("How Far I'll Go (Tagalog Version)", Some(168))
         ));
+    }
+
+    /// A stand-in yt-dlp that prints one good result, then fails the way a
+    /// search with one unavailable video does.
+    #[tokio::test]
+    async fn a_search_with_one_failed_result_keeps_the_others() {
+        let dir = std::env::temp_dir().join(format!("songden-ytdlp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("yt-dlp");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho '{\"webpage_url\":\"https://music.youtube.com/watch?v=k\",\"title\":\"Kakamora\",\"duration\":273,\"artists\":[\"Mark Mancina\"]}'\necho 'ERROR: [youtube] x: Video unavailable' >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        // the search itself keeps the good result
+        let worker = Worker {
+            library: Library::new(dir.join("music")).unwrap(),
+            ytdlp: fake.to_str().unwrap().into(),
+            parallel: 1,
+            spotify: Spotify::new().unwrap(),
+            failures: Arc::new(Mutex::new(JsonStore::load(&dir, "failures.json"))),
+            queued: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let searched = worker.search("ytsearch6:kakamora").await.unwrap();
+        assert_eq!(
+            searched
+                .iter()
+                .map(|c| c.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Kakamora"]
+        );
+        let run = run_ytdlp(fake.to_str().unwrap(), &["search"], Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(
+            run.error.as_deref(),
+            Some("ERROR: [youtube] x: Video unavailable")
+        );
+        let found = parse_candidates(&run.stdout);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].title, "Kakamora");
+        assert_eq!(found[0].seconds, Some(273));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

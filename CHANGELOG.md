@@ -47,6 +47,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `FETCH_PARALLEL` sets how many songs are fetched side by side: 1 by default,
   since many parallel requests from one home address trips YouTube's bot checks;
   2-3 for a big first import.
+- A search where one result fails to load (an unavailable video) keeps the
+  results that did load; it used to drop them all and report the song as not
+  found, which lost most of Moana's score.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
