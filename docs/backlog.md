@@ -37,15 +37,12 @@ What is not done, and why. Delete an entry when it ships.
 - **A restart drops the fetch queue.** Nothing resumes on its own; the next
   "Check for new songs" (or added playlist) queues what is still missing.
 
-## Known gaps
-
 - **A song being retried shows twice in the Downloads card.** During "Check for
-  new songs", `parents_status`-style output in `http.rs` lists
-  `Fetcher::status`'s queued songs and its failures, and `retry_failed` keeps
-  the failure record until the retry ends, so one song appears as both
-  "downloading" and "not found". Seen in `/api/parents/status` output; cosmetic,
-  and it clears when the retry ends. The fix is to skip failures whose id is
-  queued.
+  new songs", `parents_status` in `http.rs` lists `Fetcher::status`'s queued
+  songs and its failures, and `retry_failed` keeps the failure record until the
+  retry ends, so one song appears as both "downloading" and "not found". Seen in
+  `/api/parents/status` output; cosmetic, and it clears when the retry ends. The
+  fix is to skip failures whose id is queued.
 - **Moana's score demos stay not found:** Maui Battles, Cavern, It's Called
   Wayfinding, Maui Leaves and Sea Monsters, all "Score Demo" by Mark Mancina.
   Every search came back without a match; that they are not on YouTube at all is
