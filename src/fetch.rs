@@ -210,6 +210,13 @@ pub fn is_the_song(track: &Track, c: &Candidate) -> bool {
     {
         return false;
     }
+    // Uploads often put the artists in the title ("Mark Mancina, Opetaia Foa'i -
+    // Te Fiti Restored"); Spotify's own artist names aren't extra title words.
+    let artist_words: BTreeSet<String> = track.artists.split(',').flat_map(words).collect();
+    let have: BTreeSet<String> = have
+        .into_iter()
+        .filter(|w| want.contains(w) || !artist_words.contains(w))
+        .collect();
     let (want_t, have_t) = (telling(&want), telling(&have));
     let union = want_t.union(&have_t).count();
     let shared = want_t.intersection(&have_t).count();
@@ -224,8 +231,10 @@ pub fn is_the_song(track: &Track, c: &Candidate) -> bool {
 }
 
 /// Whether one of Spotify's artists (other than a label like "Disney") is among
-/// the result's artists or names its channel. Names are compared folded, and one
-/// may contain the other ("Carolina Gaitán - La Gaita" and "Carolina Gaitán").
+/// the result's artists, names its channel, or is named in its title (official
+/// uploads on label channels read "Artist - Song"). Names are compared folded,
+/// and one may contain the other ("Carolina Gaitán - La Gaita" and "Carolina
+/// Gaitán").
 pub fn same_singer(track: &Track, c: &Candidate) -> bool {
     let theirs: Vec<String> = c
         .artists
@@ -241,6 +250,10 @@ pub fn same_singer(track: &Track, c: &Candidate) -> bool {
         .collect();
     if ours.is_empty() {
         return true; // nothing to tell singers apart by
+    }
+    let title = format!(" {} ", norm(&c.title));
+    if ours.iter().any(|o| title.contains(&format!(" {o} "))) {
+        return true;
     }
     ours.iter().any(|o| {
         theirs
@@ -835,6 +848,30 @@ mod tests {
             ..by("Where You Are", Some(210), &["x"])
         };
         assert!(!is_the_song(&song, &unknown));
+    }
+
+    #[test]
+    fn an_official_upload_naming_its_artists_in_the_title_is_the_song() {
+        let song = Track {
+            uri: "spotify:track:626IyVO7cgaCTFbjDE3KPB".into(),
+            title: "Te Fiti Restored".into(),
+            artists: "Mark Mancina, Opetaia Foa'i".into(),
+            explicit: false,
+            seconds: 63,
+        };
+        let vevo = by(
+            "Mark Mancina, Opetaia Foa'i - Te Fiti Restored",
+            Some(63),
+            &["DisneyMusicVEVO"],
+        );
+        assert!(is_the_song(&song, &vevo));
+        // a dub's upload names other singers, so it still isn't
+        let dub = by(
+            "Luca Velletri - Te Fiti Restored",
+            Some(63),
+            &["DisneyMusicVEVO"],
+        );
+        assert!(!is_the_song(&song, &dub));
     }
 
     #[test]

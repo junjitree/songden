@@ -300,8 +300,6 @@
 // How long the + must be held to open the grown-ups' page. Long on purpose: the
 // listener should never land there by accident.
 const PARENTS_HOLD_MS = 5000;
-// The grown-ups' page goes back to the playlists by itself after this long untouched.
-const PARENTS_IDLE_MS = 30000;
 // Pressing previous this far into a song restarts it instead.
 const RESTART_AFTER_S = 3;
 // How often the playback position is saved while playing.
@@ -346,22 +344,11 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // ---- screens -------------------------------------------------------------
 
-let idleTimer = 0;
 function show(view) {
   document.body.dataset.view = view;
   if (view === "home" || view === "player") store.set("view", view);
-  clearTimeout(idleTimer);
-  if (view === "parents") armIdle();
   render();
 }
-
-// Any touch on the grown-ups' page restarts its idle clock.
-function armIdle() {
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { if (document.body.dataset.view === "parents") goHome(); }, PARENTS_IDLE_MS);
-}
-$("parents").addEventListener("pointerdown", armIdle);
-$("parents").addEventListener("input", armIdle);
 
 function signedOut() {
   show("login");

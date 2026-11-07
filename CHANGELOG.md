@@ -53,6 +53,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pressing next while a song is still loading no longer races through the
   playlist: a cancelled load isn't taken for a failed song, and a saved position
   meant for one song can no longer be applied to the next.
+- Official uploads that name their artists in the title ("Mark Mancina, Opetaia
+  Foa'i - Te Fiti Restored" on a label's channel) are accepted: Spotify's artist
+  names are not extra title words, and an artist named in the title counts as
+  the singer. Most of Moana's score is only on YouTube this way.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
