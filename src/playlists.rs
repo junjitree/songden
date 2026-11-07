@@ -207,10 +207,11 @@ impl Playlists {
     }
 
     /// Every playlist in order, refreshed if stale.
-    pub async fn all(&self) -> Vec<(String, Option<Resolved>)> {
+    /// Every playlist in order; `force` re-reads each from Spotify now.
+    pub async fn all(&self, force: bool) -> Vec<(String, Option<Resolved>)> {
         let mut out = Vec::new();
         for id in self.ids() {
-            let p = self.get(&id, false).await;
+            let p = self.get(&id, force).await;
             out.push((id, p));
         }
         out

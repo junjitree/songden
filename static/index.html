@@ -185,6 +185,8 @@
   .parents h1 { font-size: 26px; }
   .card { background: var(--button); border-radius: 18px; padding: 14px 16px; box-shadow: 0 4px 12px var(--shadow); }
   .card h2 { font-size: 17px; margin-bottom: 8px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .card-head h2 { margin: 0; }
   .row { display: flex; align-items: center; gap: 10px; }
   .row + .row { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(74, 36, 8, 0.12); }
   .row .text { flex: 1; min-width: 0; }
@@ -251,7 +253,11 @@
       </form>
       <p class="msg" id="add-msg">In Spotify: the playlist → ⋯ → Share → Copy link. It must be public.</p>
     </div>
-    <div class="card"><h2>Playlists</h2><div id="parent-list"></div></div>
+    <div class="card">
+      <div class="card-head"><h2>Playlists</h2><button class="pill soft" id="refresh" type="button">Check for new songs</button></div>
+      <div id="parent-list"></div>
+      <p class="msg" id="refresh-msg"></p>
+    </div>
     <div class="card" id="dl-card" hidden><h2>Downloads</h2><div id="dl-list"></div></div>
   </div>
 </section>
@@ -623,14 +629,14 @@ if ("mediaSession" in navigator) {
 
 // ---- grown-ups' page ---------------------------------------------------------
 
-async function loadParents() {
+async function loadParents(url = "/api/parents/status", opts) {
   let status;
   try {
-    status = await getJSON("/api/parents/status");
+    status = await getJSON(url, opts);
   } catch (err) {
-    if (err instanceof SignedOut) return signedOut();
+    if (err instanceof SignedOut) { signedOut(); return false; }
     $("parent-list").replaceChildren(el("p", { class: "msg err" }, "Couldn't reach the server."));
-    return;
+    return false;
   }
   const rows = status.playlists.map((p) => {
     const waiting = p.missing.length;
@@ -665,7 +671,18 @@ async function loadParents() {
     el("div", { class: "row" },
       el("div", { class: "text" }, el("div", { class: "t" }, a.album), el("div", { class: "a" }, label[a.state] || a.state)))));
   $("dl-card").hidden = !status.albums.length;
+  return true;
 }
+
+// Re-read every playlist from Spotify now and retry albums not found.
+$("refresh").addEventListener("click", async () => {
+  const button = $("refresh");
+  button.disabled = true;
+  $("refresh-msg").textContent = "Checking Spotify…";
+  const ok = await loadParents("/api/parents/refresh", { method: "POST" });
+  $("refresh-msg").textContent = ok ? "Up to date. New songs download in the background." : "Couldn't check. Try again in a moment.";
+  button.disabled = false;
+});
 
 $("add-form").addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -302,6 +302,21 @@ impl Ingester {
         }
     }
 
+    /// Lets albums that were not found be tried again on the next kick, without
+    /// waiting out `RETRY_AFTER` (the grown-ups' "check now").
+    pub fn retry_failed(&self) -> Result<()> {
+        let mut albums = self
+            .albums
+            .lock()
+            .map_err(|_| Error::Internal("album states lock poisoned".into()))?;
+        for record in albums.data.values_mut() {
+            if record.state == AlbumState::Failed {
+                record.tried = 0;
+            }
+        }
+        albums.save()
+    }
+
     pub fn albums(&self) -> BTreeMap<String, AlbumRecord> {
         self.albums
             .lock()

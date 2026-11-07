@@ -43,6 +43,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/audio/{id}", get(audio))
         .route("/api/cover/{id}", get(song_cover))
         .route("/api/parents/status", get(parents_status))
+        .route("/api/parents/refresh", post(refresh))
         .route("/api/parents/playlists", post(add_playlist))
         .route("/api/parents/playlists/{id}", delete(remove_playlist))
         .route_layer(middleware::from_fn_with_state(
@@ -154,7 +155,7 @@ fn checked_item(id: &str) -> Result<&str> {
 async fn playlists(State(state): State<AppState>) -> Json<Value> {
     let tiles: Vec<Value> = state
         .playlists
-        .all()
+        .all(false)
         .await
         .into_iter()
         .map(|(id, p)| match p {
@@ -235,7 +236,7 @@ async fn song_cover(State(state): State<AppState>, Path(id): Path<String>) -> Re
 async fn parents_status(State(state): State<AppState>) -> Json<Value> {
     let lists: Vec<Value> = state
         .playlists
-        .all()
+        .all(false)
         .await
         .into_iter()
         .map(|(id, p)| match p {
@@ -258,6 +259,15 @@ async fn parents_status(State(state): State<AppState>) -> Json<Value> {
         .map(|(album, state)| json!({ "album": album, "state": state }))
         .collect();
     Json(json!({ "playlists": lists, "albums": albums }))
+}
+
+/// The grown-ups' "check now": retry albums not found, re-read every playlist
+/// from Spotify (which hands new missing songs to the downloader), and answer
+/// with the fresh status.
+async fn refresh(State(state): State<AppState>) -> Result<Json<Value>> {
+    state.ingest.retry_failed()?;
+    state.playlists.all(true).await;
+    Ok(parents_status(State(state)).await)
 }
 
 #[derive(Deserialize)]
