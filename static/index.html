@@ -61,7 +61,9 @@
   .back:active { background: var(--button-press); }
   .topbar .spacer { flex: 1; }
   body:not([data-view="home"]) .badge, body:not([data-view="home"]) .add-btn { display: none; }
-  body[data-view="player"] .back, body[data-view="parents"] .back { display: flex; }
+  body[data-view="player"] .back, body[data-view="parents"] .back, body[data-view="list"] .back { display: flex; }
+  /* simple controls: only the lion, no previous or next */
+  .simple-controls .js-prev, .simple-controls .js-next { display: none; }
 
   /* the grown-ups' door: a + that opens only after a long hold */
   .add-btn { position: relative; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: var(--ink-soft); }
@@ -82,8 +84,10 @@
     padding: 8px 16px 24px;
   }
   body.has-track[data-view="home"] #home { bottom: var(--bar); }
-  body[data-view="home"] #home, body[data-view="player"] #player,
+  body[data-view="home"] #home, body[data-view="player"] #player, body[data-view="list"] #list,
   body[data-view="parents"] #parents, body[data-view="login"] #login { display: block; }
+  body.has-track[data-view="list"] #list { bottom: var(--bar); }
+  body.has-track[data-view="list"] .bar { display: flex; }
 
   /* sign-in (a grown-up does this once per device) */
   .login { max-width: 420px; margin: 10vh auto 0; text-align: center; display: flex; flex-direction: column; gap: 14px; }
@@ -105,6 +109,33 @@
   .tile .name { font-size: 22px; font-weight: 800; line-height: 1.1; padding: 0 4px; }
   .tile .sub { font-size: 15px; color: var(--ink-soft); padding: 0 4px; margin-top: -6px; }
   .note { text-align: center; color: var(--ink-soft); font-size: 18px; margin: 15vh 24px 0; }
+
+  /* the song list (when the grown-ups turn it on): tap a song to start there */
+  .list-head { display: flex; align-items: center; gap: 16px; max-width: 760px; margin: 8px auto 16px; }
+  .list-head .art { width: 96px; height: 96px; flex: none; border-radius: 18px; border: 4px solid var(--button); background: var(--button) center / cover no-repeat; box-shadow: 0 8px 18px var(--shadow); }
+  .list-head h1 { font-size: 30px; line-height: 1.1; }
+  .list-head p { color: var(--ink-soft); margin-top: 4px; }
+  .songs { list-style: none; padding: 0; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .song { width: 100%; display: flex; align-items: center; gap: 14px; padding: 8px; text-align: left; border-radius: 18px; background: rgba(255, 241, 214, 0.55); }
+  .song:active { background: var(--button-press); }
+  .song.current { background: var(--button); box-shadow: 0 4px 12px var(--shadow); }
+  .song .thumb { width: 56px; height: 56px; flex: none; border-radius: 12px; background: var(--button) center / cover no-repeat; }
+  .song .text { min-width: 0; flex: 1; }
+  .song .t { font-size: 19px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song .a { font-size: 14px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* settings switches on the grown-ups' page */
+  .setting { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+  .setting + .setting { border-top: 1px solid rgba(74, 36, 8, 0.12); }
+  .setting .text { flex: 1; }
+  .setting .t { font-weight: 800; }
+  .setting .a { font-size: 14px; color: var(--ink-soft); }
+  .switch { position: relative; width: 52px; height: 32px; flex: none; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch span { position: absolute; inset: 0; border-radius: 16px; background: rgba(74, 36, 8, 0.25); transition: background 0.15s; pointer-events: none; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+  .switch input:checked + span { background: var(--mane); }
+  .switch input:checked + span::after { transform: translateX(20px); }
 
   /* the controls: previous, the lion, next */
   .controls {
@@ -243,6 +274,11 @@
 
 <section class="view" id="home"><div class="tiles" id="tiles"></div></section>
 
+<section class="view" id="list">
+  <div class="list-head"><div class="art" id="list-art"></div><div><h1 id="list-name"></h1><p id="list-sub"></p></div></div>
+  <ol class="songs" id="songs"></ol>
+</section>
+
 <section class="view" id="player">
   <div class="player">
     <div class="art" id="p-art"></div>
@@ -257,6 +293,13 @@
   <div class="parents">
     <h1>For grown-ups</h1>
     <div class="card">
+      <h2>Settings</h2>
+      <label class="setting"><div class="text"><div class="t">Song list</div><div class="a">Tapping a playlist shows its songs to pick from, instead of playing straight away.</div></div><span class="switch"><input type="checkbox" data-setting="songList"><span></span></span></label>
+      <label class="setting"><div class="text"><div class="t">Shuffle</div><div class="a">Play songs in a mixed-up order, each once before any repeats.</div></div><span class="switch"><input type="checkbox" data-setting="shuffle"><span></span></span></label>
+      <label class="setting"><div class="text"><div class="t">Simple controls</div><div class="a">Only the play button, no previous or next.</div></div><span class="switch"><input type="checkbox" data-setting="simpleControls"><span></span></span></label>
+      <p class="msg" id="settings-msg"></p>
+    </div>
+    <div class="card">
       <h2>Add a playlist</h2>
       <form class="field" id="add-form">
         <input id="add-link" type="url" inputmode="url" placeholder="Paste a Spotify playlist link" autocomplete="off">
@@ -266,8 +309,8 @@
     </div>
     <div class="card">
       <div class="card-head"><h2>Playlists</h2><button class="pill soft" id="refresh" type="button">Check for new songs</button></div>
-      <div id="parent-list"></div>
       <p class="msg" id="refresh-msg"></p>
+      <div id="parent-list"></div>
     </div>
     <div class="card" id="dl-card" hidden>
       <div class="card-head"><h2>Downloads</h2><span class="count" id="dl-count"></span></div>
@@ -310,7 +353,10 @@ const audio = new Audio();
 audio.preload = "auto";
 const lists = {};   // playlist id -> {id, name, tracks, missing, ...}, fetched ahead so a tap can play at once
 let queue = null;   // the playlist playing
-let index = 0;
+let index = 0;      // the song playing, in queue.tracks
+let order = [];     // the order songs play in (indexes into queue.tracks)
+let pos = 0;        // where in `order` the song playing is
+let shown = null;   // the playlist on the song list screen
 let failures = 0;   // songs in a row that couldn't play
 
 const store = {
@@ -340,6 +386,26 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 const art = (url) => `background-image:url("${url}")`;
+
+// ---- settings (set on the grown-ups' page, the same on every device) --------
+
+let settings = { songList: false, shuffle: false, simpleControls: false, ...(store.get("settings") || {}) };
+
+function applySettings() {
+  document.body.classList.toggle("simple-controls", Boolean(settings.simpleControls));
+  for (const box of document.querySelectorAll("[data-setting]")) box.checked = Boolean(settings[box.dataset.setting]);
+}
+
+async function loadSettings() {
+  try {
+    settings = { ...settings, ...(await getJSON("/api/settings")) };
+    store.set("settings", settings);
+  } catch (err) {
+    if (err instanceof SignedOut) throw err;
+    console.warn("settings unavailable; using the last ones", err);
+  }
+  applySettings();
+}
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // ---- screens -------------------------------------------------------------
@@ -358,6 +424,7 @@ function signedOut() {
 async function goHome() {
   show("home");
   try {
+    await loadSettings();
     const { playlists } = await getJSON("/api/playlists");
     renderTiles(playlists);
     // fetch every playlist's songs now, so tapping a tile can start playing at once
@@ -382,6 +449,7 @@ async function refreshList(id) {
     queue = lists[id];
     const at = queue.tracks.findIndex((t) => t.id === currentId);
     if (at >= 0) index = at;
+    makeOrder(index);
     render();
   }
 }
@@ -395,7 +463,8 @@ function renderTiles(playlists) {
   }
   for (const p of playlists) {
     const current = queue && queue.id === p.id;
-    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}${current ? " current" : ""}`, onclick: () => openPlaylist(p.id) },
+    const open = () => (settings.songList ? openList(p.id) : openPlaylist(p.id));
+    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}${current ? " current" : ""}`, onclick: open },
       el("div", { class: "art", style: art(`/api/pcover/${p.id}`) }),
       el("div", { class: "name" }, p.name),
       el("div", { class: "sub" }, p.count ? plural(p.count, "song") : "Getting songs…")));
@@ -415,8 +484,85 @@ async function openPlaylist(id) {
   const at = saved ? list.tracks.findIndex((t) => t.id === saved.id) : -1;
   show("player");
   if (!list.tracks.length) { audio.pause(); audio.removeAttribute("src"); render(); return; }
-  load(at >= 0 ? at : 0, at >= 0 ? saved.time || 0 : 0);
+  // shuffled, a fresh start begins anywhere; a song left mid-way carries on
+  const first = at >= 0 ? at : settings.shuffle ? Math.floor(Math.random() * list.tracks.length) : 0;
+  makeOrder(first);
+  load(first, at >= 0 ? saved.time || 0 : 0);
   play();
+}
+
+// With the song list on, tapping a playlist shows its songs; tapping one plays
+// the playlist from there.
+async function openList(id) {
+  if (!lists[id]) await refreshList(id).catch(() => {});
+  shown = lists[id];
+  if (!shown) return;
+  $("list-art").style.cssText = art(`/api/pcover/${id}`);
+  $("list-name").textContent = shown.name;
+  $("list-sub").textContent = shown.tracks.length ? plural(shown.tracks.length, "song") : "Getting songs…";
+  renderSongs();
+  show("list");
+}
+
+function renderSongs() {
+  if (!shown) return;
+  $("songs").replaceChildren(...shown.tracks.map((t, i) => {
+    const current = queue && queue.id === shown.id && queue.tracks[index]?.id === t.id;
+    return el("li", {},
+      el("button", { class: `song${current ? " current" : ""}`, onclick: () => playFrom(shown, i) },
+        el("div", { class: "thumb", style: art(`/api/cover/${t.id}`) }),
+        el("div", { class: "text" }, el("div", { class: "t" }, t.title), el("div", { class: "a" }, t.artist))));
+  }));
+}
+
+function playFrom(list, i) {
+  queue = list;
+  failures = 0;
+  makeOrder(i);
+  load(i);
+  play();
+  show("player");
+}
+
+// ---- play order ------------------------------------------------------------
+
+function shuffled(items) {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
+// The order songs play in, starting from song `first`: the playlist's own, or
+// with shuffle on, a mixed-up order that plays every song once.
+function makeOrder(first) {
+  const all = [...Array(queue ? queue.tracks.length : 0).keys()];
+  if (settings.shuffle) {
+    order = [first, ...shuffled(all.filter((i) => i !== first))];
+    pos = 0;
+  } else {
+    order = all;
+    pos = Math.max(all.indexOf(first), 0);
+  }
+}
+
+// The song `dir` steps away in the play order. Shuffled, a finished round is
+// reshuffled, never starting with the song that just played.
+function step(dir) {
+  if (!order.length) makeOrder(index);
+  pos += dir;
+  if (pos >= order.length) {
+    if (settings.shuffle) {
+      const last = order[order.length - 1];
+      order = shuffled([...order]);
+      if (order.length > 1 && order[0] === last) order.push(order.shift());
+    }
+    pos = 0;
+  } else if (pos < 0) {
+    pos = order.length - 1;
+  }
+  return order[pos];
 }
 
 $("back").addEventListener("click", goHome);
@@ -520,6 +666,7 @@ function render() {
       : failures >= queue.tracks.length ? "Can't play right now. Try again soon."
       : "";
   }
+  if (document.body.dataset.view === "list") renderSongs();
   if (!t) return;
   $("now-art").style.cssText = art(`/api/cover/${t.id}`);
   $("now-title").textContent = t.title;
@@ -566,10 +713,10 @@ function play() {
 }
 
 function toggle() { audio.paused ? play() : audio.pause(); }
-function next() { load(index + 1); play(); }
+function next() { load(step(1)); play(); }
 function prev() {
   if (audio.currentTime > RESTART_AFTER_S) { audio.currentTime = 0; return; }
-  load(index - 1);
+  load(step(-1));
   play();
 }
 
@@ -752,7 +899,31 @@ async function loadParents(url = "/api/parents/status", opts) {
   const missing = status.downloads.length - waiting;
   $("dl-count").textContent = [waiting && `${waiting} waiting`, missing && `${missing} not found`].filter(Boolean).join(" · ");
   $("dl-card").hidden = !status.downloads.length;
+  applySettings();
   return true;
+}
+
+// The settings switches: saved at once, for every device.
+for (const box of document.querySelectorAll("[data-setting]")) {
+  box.addEventListener("change", async () => {
+    const before = { ...settings };
+    settings = { ...settings, [box.dataset.setting]: box.checked };
+    applySettings();
+    try {
+      settings = await getJSON("/api/parents/settings", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings),
+      });
+      store.set("settings", settings);
+      $("settings-msg").textContent = "";
+      // shuffle switched: the next songs follow the new order from this one on
+      if (box.dataset.setting === "shuffle" && queue) makeOrder(index);
+    } catch (err) {
+      if (err instanceof SignedOut) return signedOut();
+      settings = before;
+      applySettings();
+      $("settings-msg").textContent = "Couldn't save that. Try again.";
+    }
+  });
 }
 
 // Re-read every playlist from Spotify now and retry songs not found.
@@ -793,6 +964,7 @@ document.addEventListener("visibilitychange", () => {
   const view = document.body.dataset.view;
   if (view === "home") goHome();
   else if (view === "player" && queue) refreshList(queue.id).catch(signedOut);
+  else if (view === "list" && shown) refreshList(shown.id).then(() => openList(shown.id)).catch(signedOut);
 });
 
 (async () => {
@@ -807,6 +979,7 @@ document.addEventListener("visibilitychange", () => {
   const at = saved ? list.tracks.findIndex((t) => t.id === saved.id) : -1;
   if (at >= 0) {
     queue = list;
+    makeOrder(at);
     load(at, saved.time || 0);
     if (savedView === "player") show("player");
   }

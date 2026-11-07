@@ -9,7 +9,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
@@ -20,6 +20,7 @@ use tower_http::services::ServeFile;
 use crate::{
     AppState, Error, Result,
     auth::require_session,
+    settings::Settings,
     spotify::{is_id, playlist_id},
 };
 
@@ -34,6 +35,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/cover/{id}", get(song_cover))
         .route("/api/parents/status", get(parents_status))
         .route("/api/parents/refresh", post(refresh))
+        .route("/api/settings", get(get_settings))
+        .route("/api/parents/settings", put(put_settings))
         .route("/api/parents/playlists", post(add_playlist))
         .route("/api/parents/playlists/{id}", delete(remove_playlist))
         .route_layer(middleware::from_fn_with_state(
@@ -278,6 +281,17 @@ async fn refresh(State(state): State<AppState>) -> Result<Json<Value>> {
     state.fetcher.retry_failed()?;
     state.playlists.all(true).await;
     Ok(parents_status(State(state)).await)
+}
+
+async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
+    Json(state.settings.get())
+}
+
+async fn put_settings(
+    State(state): State<AppState>,
+    Json(body): Json<Settings>,
+) -> Result<Json<Settings>> {
+    Ok(Json(state.settings.set(body)?))
 }
 
 #[derive(Deserialize)]

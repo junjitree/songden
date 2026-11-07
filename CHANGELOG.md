@@ -28,7 +28,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
   playlist by its share link, remove one with a confirming second tap, see how
   many songs of each are ready, with a Downloads card listing each song still on
-  its way or not found. Returns to the playlists after 30 seconds untouched.
+  its way or not found.
+- Settings on the grown-ups' page, kept on the server so every device follows
+  them: a song list (tap a playlist to pick a song instead of playing at once),
+  shuffle (every song once per round, never repeating across a round's edge;
+  previous steps back through what played), and simple controls (only the play
+  button).
 - Playlists read from Spotify's public pages (no login, no developer app), with
   each song's length.
 - Songs fetched one at a time from YouTube Music (then YouTube) with yt-dlp and

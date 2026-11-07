@@ -24,14 +24,17 @@ independent project and is not affiliated with or endorsed by either._
 Nothing on the listener's side asks them to type, choose or remember anything.
 There is no PIN pad and no login screen in their path: songden was built for a
 child for whom a screen like that is a dead end. The grown-ups' page sits behind
-a long hold instead, and leads back on its own.
+a long hold instead.
 
 ## What grown-ups get
 
 - **Playlists by link.** Hold the **+** for 5 seconds to open the grown-ups'
   page (a tap does nothing), paste a Spotify playlist's share link, done. Remove
-  one with a confirming second tap. The page goes back to the playlists by
-  itself after 30 seconds untouched.
+  one with a confirming second tap.
+- **Settings** on the same page, the same on every device: a **song list**
+  (tapping a playlist shows its songs to pick from, instead of playing at once),
+  **shuffle** (every song once before any repeats), and **simple controls**
+  (only the play button, no previous or next).
 - **Songs fetch themselves, one by one.** Each song on a playlist is looked up
   on YouTube Music (then YouTube) with yt-dlp and saved on the server. A result
   only counts if its length is within a few seconds of Spotify's and it isn't a

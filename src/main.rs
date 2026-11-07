@@ -16,6 +16,7 @@ mod fetch;
 mod http;
 mod playlists;
 mod result;
+mod settings;
 mod spotify;
 mod store;
 mod text;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub fetcher: Fetcher,
     pub library: Library,
     pub spotify: Spotify,
+    pub settings: Arc<settings::SettingsStore>,
 }
 
 #[tokio::main]
@@ -101,6 +103,7 @@ async fn main() -> Result<()> {
         fetcher,
         library,
         spotify,
+        settings: Arc::new(settings::SettingsStore::new(&cfg.state_dir)),
     };
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
