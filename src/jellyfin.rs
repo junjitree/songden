@@ -60,6 +60,21 @@ pub fn pick<'a>(title: &str, artists: &str, items: &'a [Item]) -> Option<&'a Ite
         .max_by_key(|i| shared(i))
 }
 
+/// The word to search Jellyfin by: the title's longest word as written.
+///
+/// Jellyfin's search is literal about punctuation, and `pick` does the exact
+/// comparison anyway, so one distinctive word is enough. Apostrophes split
+/// words here ("I'll" is "I" and "ll"): folding them away first would search for
+/// "ill", which Jellyfin does not connect to "I'll".
+pub fn search_term(title: &str) -> Option<String> {
+    title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .rev() // max_by_key keeps the last of equals; this makes it the first
+        .max_by_key(|w| w.chars().count())
+        .map(str::to_string)
+}
+
 #[derive(Clone)]
 pub struct Jellyfin {
     client: reqwest::Client,
@@ -79,10 +94,7 @@ impl Jellyfin {
 
     /// The library item for a Spotify song, or None if it isn't downloaded yet.
     pub async fn find(&self, title: &str, artists: &str) -> Result<Option<Item>> {
-        let want = norm(title);
-        // Search by the longest word: Jellyfin's search is literal about
-        // punctuation, and `pick` does the exact comparison anyway.
-        let Some(term) = want.split(' ').max_by_key(|w| w.len()) else {
+        let Some(term) = search_term(title) else {
             return Ok(None);
         };
         let items: Items = self
@@ -92,7 +104,7 @@ impl Jellyfin {
             .query(&[
                 ("Recursive", "true"),
                 ("IncludeItemTypes", "Audio"),
-                ("searchTerm", term),
+                ("searchTerm", &term),
                 ("Fields", "Artists,AlbumArtist,AlbumId,RunTimeTicks"),
                 ("Limit", &SEARCH_LIMIT.to_string()),
             ])
@@ -169,6 +181,15 @@ mod tests {
                 .id,
             "i"
         );
+    }
+
+    #[test]
+    fn search_terms_are_real_words() {
+        // "I'll" folded would be "ill", which Jellyfin's search can't find
+        assert_eq!(search_term("How Far I'll Go").as_deref(), Some("How"));
+        assert_eq!(search_term("You're Welcome").as_deref(), Some("Welcome"));
+        assert_eq!(search_term("Tío Bruno").as_deref(), Some("Bruno"));
+        assert_eq!(search_term(" - ").as_deref(), None);
     }
 
     #[test]

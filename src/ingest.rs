@@ -19,10 +19,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -125,20 +126,61 @@ pub fn pick_catalogue<'a>(info: &TrackAlbum, candidates: &'a [Value]) -> Option<
         .map(|(_, c)| c)
 }
 
-/// MP3 releases that look like this album, best first: the standard edition
-/// before a deluxe one (whatever Spotify's album is called), then by seeders.
+/// Lossy releases that look like this album, best first: the standard edition
+/// before a deluxe one (whatever Spotify's album is called), then ones that say
+/// they are MP3 (uploaders also write "320", "V0", "CBR"...), then by seeders.
 /// Lossless releases are never offered: they are many times the size, slower to
-/// fetch, and what a phone caches anyway is the MP3.
+/// fetch, and what a phone caches anyway is the MP3. A release that names no
+/// format is still offered, after the labelled ones; Lidarr checks the files.
+/// What the fallback searches the indexers for, in order: the album's full
+/// name, then just the words that identify it, with "soundtrack" for a
+/// soundtrack or else the first artist.
+pub fn search_queries(info: &TrackAlbum) -> Vec<String> {
+    let full = words(&info.album).join(" ");
+    let mut loose: Vec<String> = core(&info.album).into_iter().collect();
+    // `core` is a set; keep the words in the order the name has them
+    let order = words(&info.album);
+    loose.sort_by_key(|w| order.iter().position(|o| o == w));
+    if words(&info.album).iter().any(|w| w == "soundtrack") {
+        loose.push("soundtrack".into());
+    } else if let Some(artist) = info.artists.split(',').next() {
+        loose.extend(words(artist));
+    }
+    let loose = loose.join(" ");
+    if loose.is_empty() || loose == full {
+        vec![full]
+    } else {
+        vec![full, loose]
+    }
+}
+
+static LOSSLESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(flac|alac|wav|lossless|hi-?res)\b|\b24[ -]?(bit|96|192)\b")
+        .expect("valid regex")
+});
+static MP3: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bmp3\b|\b(320|256|192)(k|kbps|cbr)?\b|\bv[02]\b|\b(cbr|vbr)\b")
+        .expect("valid regex")
+});
+
+fn is_lossless(title: &str) -> bool {
+    LOSSLESS.is_match(title)
+}
+
+fn says_mp3(title: &str) -> bool {
+    MP3.is_match(title)
+}
+
 pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
     let album_words: BTreeSet<String> = words(album).into_iter().collect();
     let want = core(album);
-    let mut picks: Vec<(bool, u64, &Value)> = results
+    let mut picks: Vec<(bool, bool, u64, &Value)> = results
         .iter()
         .filter_map(|r| {
             let title = r["title"].as_str()?;
             let seeders = r["seeders"].as_u64().unwrap_or(0);
             let title_words: BTreeSet<String> = words(title).into_iter().collect();
-            if seeders < 1 || !want.is_subset(&title_words) || !title_words.contains("mp3") {
+            if seeders < 1 || !want.is_subset(&title_words) || is_lossless(title) {
                 return None;
             }
             // "Moana 2" is not "Moana": a number right after one of the album's own
@@ -159,11 +201,11 @@ pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
             }
             // uploaders abbreviate Deluxe Edition as "D E"
             let is_deluxe = title_words.contains("deluxe") || title.to_lowercase().contains("d e)");
-            Some((!is_deluxe, seeders, r))
+            Some((!is_deluxe, says_mp3(title), seeders, r))
         })
         .collect();
-    picks.sort_by_key(|p| std::cmp::Reverse((p.0, p.1)));
-    picks.into_iter().map(|p| p.2).collect()
+    picks.sort_by_key(|p| std::cmp::Reverse((p.0, p.1, p.2)));
+    picks.into_iter().map(|p| p.3).collect()
 }
 
 /// The name a fallback release is offered to Lidarr under. Lidarr parses it, so
@@ -604,26 +646,34 @@ impl Worker {
 
     /// Offers indexer releases named like Spotify's album to Lidarr; true if one was taken.
     async fn fallback(&self, album: &Value, info: &TrackAlbum) -> bool {
-        let query = words(&info.album).join(" ");
-        let results = match self
-            .prowlarr
-            .get(
-                "/search",
-                &[
-                    ("query", &query),
-                    ("type", "search"),
-                    ("categories", "3000"),
-                ],
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(err) => {
-                warn!("ingest: indexer search for {:?} failed: {err}", info.album);
-                return false;
+        // The full name first; uploaders rarely spell out "Original Motion Picture
+        // Soundtrack / Deluxe Edition" though, and indexers want every word, so
+        // if that finds nothing usable, search by the identifying words alone.
+        let mut results = Vec::new();
+        for query in search_queries(info) {
+            match self
+                .prowlarr
+                .get(
+                    "/search",
+                    &[
+                        ("query", &query),
+                        ("type", "search"),
+                        ("categories", "3000"),
+                    ],
+                )
+                .await
+            {
+                Ok(found) => results = found.as_array().cloned().unwrap_or_default(),
+                Err(err) => {
+                    warn!("ingest: indexer search {query:?} failed: {err}");
+                    continue;
+                }
             }
-        };
-        let results = results.as_array().cloned().unwrap_or_default();
+            if !rank_releases(&info.album, &results).is_empty() {
+                break;
+            }
+            info!("ingest: nothing usable for {query:?}");
+        }
         let artist = album["artist"]["artistName"]
             .as_str()
             .map(String::from)
@@ -764,6 +814,54 @@ mod tests {
         assert_eq!(
             t,
             "Lin‐Manuel Miranda - Moana: Original Motion Picture Soundtrack (2016) [MP3-320]"
+        );
+    }
+
+    #[test]
+    fn lossy_releases_count_even_without_saying_mp3() {
+        let results = vec![
+            json!({"title": "Brother.Bear.1CD.2003.Soundtrack.[WmC]", "seeders": 5}),
+            json!({"title": "Brother Bear - Soundtrack 320cbr (Big Papi)", "seeders": 1}),
+            json!({"title": "Brother Bear Soundtrack [24-96 Hi-Res]", "seeders": 9}),
+        ];
+        let ranked = rank_releases("Brother Bear", &results);
+        let titles: Vec<&str> = ranked
+            .iter()
+            .map(|r| r["title"].as_str().unwrap())
+            .collect();
+        // the 320 one says it is MP3, so it beats the unlabelled one despite fewer
+        // seeders; the hi-res one is lossless and never offered
+        assert_eq!(
+            titles,
+            [
+                "Brother Bear - Soundtrack 320cbr (Big Papi)",
+                "Brother.Bear.1CD.2003.Soundtrack.[WmC]"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_second_search_drops_the_boilerplate() {
+        let frozen = TrackAlbum {
+            album: "Frozen (Original Motion Picture Soundtrack / Deluxe Edition)".into(),
+            year: Some("2013".into()),
+            artists: "Idina Menzel".into(),
+        };
+        assert_eq!(
+            search_queries(&frozen),
+            [
+                "frozen original motion picture soundtrack deluxe edition",
+                "frozen soundtrack"
+            ]
+        );
+        let single = TrackAlbum {
+            album: "I Just Might".into(),
+            year: None,
+            artists: "Bruno Mars".into(),
+        };
+        assert_eq!(
+            search_queries(&single),
+            ["i just might", "i just might bruno mars"]
         );
     }
 
