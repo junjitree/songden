@@ -167,6 +167,66 @@ static MP3: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid regex")
 });
 
+/// Words that may follow an album's name in a release title without making it
+/// a different album: soundtrack boilerplate and how a release describes itself.
+const AFTER_NAME: &[&str] = &[
+    "ost",
+    "score",
+    "deluxe",
+    "edition",
+    "expanded",
+    "remastered",
+    "remaster",
+    "version",
+    "soundtrack",
+    "original",
+    "motion",
+    "picture",
+    "music",
+    "songs",
+    "mp3",
+    "flac",
+    "cbr",
+    "vbr",
+    "web",
+    "cd",
+    "va",
+    "various",
+    "artists",
+    "kbps",
+    "album",
+    "the",
+    "from",
+    "by",
+    "and",
+    "a",
+];
+
+/// Whether the release title has the album's identifying words in a row,
+/// followed by nothing, an extra from `AFTER_NAME`, or something with digits (a
+/// year, "320kbps", "1CD"). Uploaders put the artist before the name and all
+/// sorts after it, so only the word right after the name is checked.
+pub fn names_the_album(album: &str, title: &str) -> bool {
+    let want = core(album);
+    let name: Vec<String> = {
+        let mut seen = BTreeSet::new();
+        words(album)
+            .into_iter()
+            .filter(|w| want.contains(w) && seen.insert(w.clone()))
+            .collect()
+    };
+    if name.is_empty() {
+        return true;
+    }
+    let ordered = words(title);
+    ordered.windows(name.len()).enumerate().any(|(i, run)| {
+        run == name.as_slice()
+            && ordered.get(i + name.len()).is_none_or(|next| {
+                AFTER_NAME.contains(&next.as_str()) || next.chars().any(|c| c.is_ascii_digit())
+            })
+    })
+}
+
 fn is_lossless(title: &str) -> bool {
     LOSSLESS.is_match(title)
 }
@@ -195,6 +255,11 @@ pub fn rank_releases<'a>(
             let seeders = r["seeders"].as_u64().unwrap_or(0);
             let title_words: BTreeSet<String> = words(title).into_iter().collect();
             if seeders < 1 || !want.is_subset(&title_words) || is_lossless(title) {
+                return None;
+            }
+            // "Frozen Planet II" holds every word of "Frozen" but is another album:
+            // the album's own words must be followed by the usual extras, not more title.
+            if !names_the_album(album, title) {
                 return None;
             }
             // For a self-titled album the release must name its year: "The
@@ -373,15 +438,17 @@ impl Ingester {
         }
     }
 
-    /// Lets albums that were not found be tried again on the next kick, without
-    /// waiting out `RETRY_AFTER` (the grown-ups' "check now").
+    /// Lets albums that were not found, or whose download vanished, be tried
+    /// again on the next kick without waiting out `RETRY_AFTER` (the grown-ups'
+    /// "check now"). A download still in Lidarr's queue is left alone: the
+    /// worker checks the queue before retrying.
     pub fn retry_failed(&self) -> Result<()> {
         let mut albums = self
             .albums
             .lock()
             .map_err(|_| Error::Internal("album states lock poisoned".into()))?;
         for record in albums.data.values_mut() {
-            if record.state == AlbumState::Failed {
+            if record.state != AlbumState::Imported {
                 record.tried = 0;
             }
         }
@@ -948,6 +1015,61 @@ mod tests {
             .map(|r| r["title"].as_str().unwrap())
             .collect();
         assert_eq!(titles, ["The Lumineers - The Lumineers (2012) MP3 320"]);
+    }
+
+    #[test]
+    fn another_title_that_starts_with_the_name_is_not_the_album() {
+        let frozen = "Frozen (Original Motion Picture Soundtrack / Deluxe Edition)";
+        assert!(!names_the_album(
+            frozen,
+            "Hans Zimmer  Frozen Planet II (Original Television Soundtrack) (2022) Mp3 320kbps"
+        ));
+        assert!(names_the_album(
+            frozen,
+            "Frozen (Original Motion Picture Soundtrack) (2013) Mp3 320kbps"
+        ));
+        assert!(names_the_album(
+            "Hercules (Original Motion Picture Soundtrack)",
+            "Hercules Soundtrack (1997)"
+        ));
+        assert!(names_the_album(
+            "Brother Bear",
+            "Brother.Bear.1CD.2003.Soundtrack.[WmC]"
+        ));
+        assert!(names_the_album(
+            "The Lumineers",
+            "The Lumineers - The Lumineers 2012 Songwriter 320kbps CBR MP3"
+        ));
+        assert!(names_the_album(
+            "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+            "Moana (Original Motion Picture Soundtrack) (2020) Mp3 [PMEDIA]"
+        ));
+        assert!(names_the_album(
+            "Wish (Original Motion Picture Soundtrack)",
+            "Julia Michaels  Wish (Original Motion Picture Soundtrack) (2023) Mp3 320kbps"
+        ));
+    }
+
+    #[test]
+    fn frozen_planet_is_not_offered_for_frozen() {
+        let results = vec![
+            json!({"title": "Hans Zimmer  Frozen Planet II (Original Television Soundtrack) (2022) Mp3 320kbps [PMEDIA]", "seeders": 30}),
+            json!({"title": "Frozen (Original Motion Picture Soundtrack) (2013) Mp3 320kbps", "seeders": 4}),
+        ];
+        let ranked = rank_releases(
+            "Frozen (Original Motion Picture Soundtrack / Deluxe Edition)",
+            "Idina Menzel",
+            Some("2013"),
+            &results,
+        );
+        let titles: Vec<&str> = ranked
+            .iter()
+            .map(|r| r["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Frozen (Original Motion Picture Soundtrack) (2013) Mp3 320kbps"]
+        );
     }
 
     #[test]
