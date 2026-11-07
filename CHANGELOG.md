@@ -21,38 +21,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The screen stays on while music plays (Screen Wake Lock) and may sleep again
   when paused.
 - A "Check for new songs" button on the grown-ups' page: re-reads every playlist
-  from Spotify at once and retries albums that were not found, without waiting
-  out the six-hour retry gap. Spotify is read only then and when a playlist is
-  added; opening the app only re-checks the library for finished downloads.
+  from Spotify at once and retries songs that were not found. Spotify is read
+  only then and when a playlist is added; songs that finish downloading appear
+  by themselves.
 - The app's lion logo in the title bar instead of an emoji.
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
-  playlist by its share link, remove one with a confirming second tap, see what
-  is downloaded and what is still waiting, with a Downloads card listing each
-  album still on its way. Returns to the playlists after 30 seconds untouched.
-- Playlists read from Spotify's public pages (no login, no developer app) and
-  matched to songs in Jellyfin by title, credit tails ignored and versions
-  (reprise, instrumental) kept apart.
-- Automatic downloads of missing songs through Lidarr, with a Prowlarr fallback
-  for albums Lidarr's own search cannot find. Downloads are MP3, standard
-  edition first: the fallback never offers lossless releases, and artists
-  songden adds get the `LIDARR_QUALITY_PROFILE` profile (default "Standard").
-  Releases are offered under a name carrying a quality Lidarr recognises
-  (MP3-320), and Prowlarr's magnet-redirect links go to Lidarr as download links
-  so the download client actually receives them. The fallback searches a second
-  time by the album's identifying words alone ("frozen soundtrack") when the
-  full name finds nothing, and treats any non-lossless release as acceptable,
-  preferring ones labelled MP3/320/V0.
-- Song titles with contractions ("How Far I'll Go") are found in the library;
-  the search word used to be "ill".
-- Artists songden adds to Lidarr are monitored (none of their other albums are),
-  so Lidarr accepts their releases; it refused every one with "Artist is not
-  monitored". For a self-titled album the release must name the album's year, so
-  the artist's other albums are not offered in its place.
-- A release must have the album's name followed by the usual extras (soundtrack,
-  edition, a year, the format), not more title: "Frozen Planet II" is not
-  offered for "Frozen". "Check for new songs" also retries downloads that
-  vanished from Lidarr's queue. Indexer searches may take up to four minutes, so
-  a slow indexer doesn't fail the whole search.
+  playlist by its share link, remove one with a confirming second tap, see how
+  many songs of each are ready, with a Downloads card listing each song still on
+  its way or not found. Returns to the playlists after 30 seconds untouched.
+- Playlists read from Spotify's public pages (no login, no developer app), with
+  each song's length.
+- Songs fetched one at a time from YouTube Music (then YouTube) with yt-dlp and
+  kept on the server as `<spotify id>.m4a` with the cover from the song's
+  Spotify page. A result counts only if its length is within a few seconds of
+  Spotify's, most of the title's telling words agree, and it isn't a version the
+  Spotify title didn't ask for (live, cover, karaoke, sped up, reprise…). The
+  container carries yt-dlp, Deno and ffmpeg and updates yt-dlp on start.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and

@@ -2,12 +2,10 @@
 //! except sign-in needs a session. Songs and covers are only served when they are
 //! on a current playlist, so a signed-in device can reach nothing else.
 
-use std::collections::BTreeMap;
-
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
@@ -16,23 +14,15 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 
 use crate::{
     AppState, Error, Result,
     auth::require_session,
-    ingest::AlbumState,
     spotify::{is_id, playlist_id},
 };
 
-/// Headers passed through from Jellyfin's audio stream (Range support needs them).
-const AUDIO_HEADERS: &[header::HeaderName] = &[
-    header::CONTENT_TYPE,
-    header::CONTENT_LENGTH,
-    header::CONTENT_RANGE,
-    header::ACCEPT_RANGES,
-    header::LAST_MODIFIED,
-    header::ETAG,
-];
 const IMAGE_HEADERS: &[header::HeaderName] = &[header::CONTENT_TYPE, header::CONTENT_LENGTH];
 
 pub fn routes(state: AppState) -> Router {
@@ -144,14 +134,6 @@ fn checked_id(id: &str) -> Result<&str> {
     }
 }
 
-fn checked_item(id: &str) -> Result<&str> {
-    if id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()) {
-        Ok(id)
-    } else {
-        Err(Error::NotFound)
-    }
-}
-
 async fn playlists(State(state): State<AppState>) -> Json<Value> {
     let tiles: Vec<Value> = state
         .playlists
@@ -208,29 +190,48 @@ async fn playlist_cover(State(state): State<AppState>, Path(id): Path<String>) -
     Ok(relay(state.spotify.image(&url).await?, IMAGE_HEADERS))
 }
 
+/// Serves a song's file from disk: Range requests (seeking, and how Safari
+/// fetches audio) are answered by tower-http's `ServeFile`.
+async fn serve(path: std::path::PathBuf, req: Request) -> Result<Response> {
+    let mut res = ServeFile::new(path)
+        .oneshot(req)
+        .await
+        .map_err(|e| Error::Internal(e.to_string()))?
+        .map(Body::new);
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=86400"),
+    );
+    Ok(res)
+}
+
+/// A song on a current playlist, by its Spotify id; nothing else is served.
+fn served_song(state: &AppState, id: &str) -> Result<()> {
+    if is_id(id) && state.playlists.on_a_playlist(id) {
+        Ok(())
+    } else {
+        Err(Error::NotFound)
+    }
+}
+
 async fn audio(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    headers: HeaderMap,
+    req: Request,
 ) -> Result<Response> {
-    let song = state
-        .playlists
-        .song(checked_item(&id)?)
-        .ok_or(Error::NotFound)?;
-    let range = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
-    Ok(relay(
-        state.jellyfin.audio(&song.id, range).await?,
-        AUDIO_HEADERS,
-    ))
+    served_song(&state, &id)?;
+    let path = state.library.audio(&id).ok_or(Error::NotFound)?;
+    serve(path, req).await
 }
 
-async fn song_cover(State(state): State<AppState>, Path(id): Path<String>) -> Result<Response> {
-    let song = state
-        .playlists
-        .song(checked_item(&id)?)
-        .ok_or(Error::NotFound)?;
-    let image_of = song.album_id.as_deref().unwrap_or(&song.id);
-    Ok(relay(state.jellyfin.image(image_of).await?, IMAGE_HEADERS))
+async fn song_cover(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    req: Request,
+) -> Result<Response> {
+    served_song(&state, &id)?;
+    let path = state.library.cover(&id).ok_or(Error::NotFound)?;
+    serve(path, req).await
 }
 
 async fn parents_status(State(state): State<AppState>) -> Json<Value> {
@@ -244,28 +245,26 @@ async fn parents_status(State(state): State<AppState>) -> Json<Value> {
             None => json!({ "id": id, "name": "Loading…", "count": 0, "total": 0, "missing": [] }),
         })
         .collect();
-    // Albums still on their way, one row each (an album asked for twice shows once).
-    let records = state.ingest.albums();
-    let pending: BTreeMap<&str, &str> = records
-        .values()
-        .filter_map(|a| match a.state {
-            AlbumState::Downloading => Some((a.album.as_str(), "downloading")),
-            AlbumState::Failed => Some((a.album.as_str(), "not-found")),
-            AlbumState::Imported => None,
-        })
+    // Songs on their way, then songs not found (only those still on a playlist).
+    let (queued, failed) = state.fetcher.status();
+    let mut downloads: Vec<Value> = queued
+        .iter()
+        .map(|t| json!({ "name": t.title, "artist": t.first_artist(), "state": "downloading" }))
         .collect();
-    let albums: Vec<Value> = pending
-        .into_iter()
-        .map(|(album, state)| json!({ "album": album, "state": state }))
-        .collect();
-    Json(json!({ "playlists": lists, "albums": albums }))
+    downloads.extend(
+        failed
+            .iter()
+            .filter(|(id, _)| state.playlists.on_a_playlist(id))
+            .map(|(_, f)| json!({ "name": f.title, "artist": f.artist, "state": "not-found", "note": f.note })),
+    );
+    Json(json!({ "playlists": lists, "downloads": downloads }))
 }
 
-/// The grown-ups' "check now": retry albums not found, re-read every playlist
-/// from Spotify (which hands new missing songs to the downloader), and answer
-/// with the fresh status.
+/// The grown-ups' "check now": retry songs not found, re-read every playlist
+/// from Spotify (which hands songs not on disk to the fetcher), and answer with
+/// the fresh status.
 async fn refresh(State(state): State<AppState>) -> Result<Json<Value>> {
-    state.ingest.retry_failed()?;
+    state.fetcher.retry_failed()?;
     state.playlists.all(true).await;
     Ok(parents_status(State(state)).await)
 }

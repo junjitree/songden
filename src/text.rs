@@ -1,32 +1,10 @@
-//! Comparing song and album names written by different people: Spotify, file
-//! tags, MusicBrainz and torrent uploaders all spell the same thing differently.
+//! Comparing song titles written by different people: Spotify and YouTube
+//! uploaders spell the same song differently.
 
-use std::{collections::BTreeSet, sync::LazyLock};
+use std::sync::LazyLock;
 
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
-
-/// Words every soundtrack title carries in some form; they say nothing about which one.
-const BOILERPLATE: &[&str] = &[
-    "original",
-    "motion",
-    "picture",
-    "soundtrack",
-    "deluxe",
-    "edition",
-    "the",
-    "from",
-    "music",
-    "ost",
-    "film",
-    "songs",
-    "version",
-    "english",
-    "a",
-    "an",
-    "of",
-    "and",
-];
 
 static DASH_CREDIT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\s+-\s+(from|feat|ft|with)\b.*$").expect("valid regex"));
@@ -57,36 +35,6 @@ pub fn norm(title: &str) -> String {
     let s = DASH_CREDIT.replace(&s, "");
     let s = PAREN_CREDIT.replace_all(&s, "");
     NON_ALNUM.replace_all(&s, " ").trim().to_string()
-}
-
-/// All the words of a name, folded.
-pub fn words(s: &str) -> Vec<String> {
-    NON_ALNUM
-        .split(&fold(s))
-        .filter(|w| !w.is_empty())
-        .map(String::from)
-        .collect()
-}
-
-/// The words that identify an album: soundtrack boilerplate and years removed.
-/// The year is compared on its own; catalogue titles such as "Encanto (2021
-/// film soundtrack)" carry it in the name and torrent names often don't.
-pub fn core(s: &str) -> BTreeSet<String> {
-    words(s)
-        .into_iter()
-        .filter(|w| !BOILERPLATE.contains(&w.as_str()))
-        .filter(|w| !(w.len() == 4 && w.chars().all(|c| c.is_ascii_digit())))
-        .collect()
-}
-
-/// Share of words two album names have in common (Jaccard index of `core`).
-pub fn overlap(a: &str, b: &str) -> f64 {
-    let (a, b) = (core(a), core(b));
-    let union = a.union(&b).count();
-    if union == 0 {
-        return 0.0;
-    }
-    a.intersection(&b).count() as f64 / union as f64
 }
 
 /// Decodes the HTML character references Spotify's pages use in attribute
@@ -162,31 +110,6 @@ mod tests {
             norm("We Don\u{2019}t Talk About Bruno")
         );
         assert_eq!(norm("Tío Bruno"), norm("Tio Bruno"));
-    }
-
-    #[test]
-    fn album_names_compare_without_boilerplate_or_years() {
-        assert_eq!(
-            overlap(
-                "Encanto (Original Motion Picture Soundtrack)",
-                "Encanto (2021 film soundtrack, English version)"
-            ),
-            1.0
-        );
-        // a sequel shares the name but is a different album
-        assert!(
-            overlap(
-                "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
-                "Moana 2 (Original Score)"
-            ) < 0.6
-        );
-        assert_eq!(
-            overlap(
-                "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
-                "Moana: Original Motion Picture Soundtrack"
-            ),
-            1.0
-        );
     }
 
     #[test]

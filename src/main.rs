@@ -1,8 +1,8 @@
-//! songden: a kid-safe music player. Spotify playlists, played from your own
-//! Jellyfin library.
+//! songden: a kid-safe music player. Spotify playlists, with each song fetched
+//! from YouTube onto your own server.
 //!
-//! The page never talks to Jellyfin, Lidarr, Prowlarr or Spotify itself; this
-//! server holds their keys and only hands out songs on the chosen playlists.
+//! The page never talks to Spotify or YouTube itself; this server reads the
+//! playlists, keeps the songs, and only hands out songs on the chosen playlists.
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -12,9 +12,8 @@ use tracing_subscriber::EnvFilter;
 mod auth;
 mod config;
 mod error;
+mod fetch;
 mod http;
-mod ingest;
-mod jellyfin;
 mod playlists;
 mod result;
 mod spotify;
@@ -25,7 +24,10 @@ pub use self::error::*;
 pub use self::result::*;
 
 use crate::{
-    auth::Auth, config::Config, ingest::Ingester, jellyfin::Jellyfin, playlists::Playlists,
+    auth::Auth,
+    config::Config,
+    fetch::{Fetcher, Library},
+    playlists::Playlists,
     spotify::Spotify,
 };
 
@@ -34,8 +36,8 @@ pub struct AppState {
     pub pages: Arc<http::Pages>,
     pub auth: Arc<Auth>,
     pub playlists: Arc<Playlists>,
-    pub ingest: Ingester,
-    pub jellyfin: Jellyfin,
+    pub fetcher: Fetcher,
+    pub library: Library,
     pub spotify: Spotify,
 }
 
@@ -70,25 +72,19 @@ async fn main() -> Result<()> {
     )?);
 
     let spotify = Spotify::new()?;
-    let jellyfin = Jellyfin::new(cfg.jellyfin_url.clone(), cfg.jellyfin_token.clone())?;
-    let ingest = Ingester::start(
-        ingest::IngestConfig {
-            lidarr_url: cfg.lidarr_url.clone(),
-            lidarr_key: cfg.lidarr_key.clone(),
-            prowlarr_url: cfg.prowlarr_url.clone(),
-            prowlarr_key: cfg.prowlarr_key.clone(),
-            music_root: cfg.music_root.clone(),
-            quality_profile: cfg.quality_profile.clone(),
-        },
+    let library = Library::new(cfg.music_dir.clone())?;
+    let fetcher = Fetcher::start(
+        library.clone(),
+        cfg.ytdlp.clone(),
         &cfg.state_dir,
         spotify.clone(),
-    )?;
+    );
     let playlists = Arc::new(Playlists::new(
         &cfg.state_dir,
         cfg.prefix(),
         spotify.clone(),
-        jellyfin.clone(),
-        ingest.clone(),
+        library.clone(),
+        fetcher.clone(),
     ));
     if playlists.ids().is_empty() {
         for id in &cfg.seed_playlists {
@@ -101,8 +97,8 @@ async fn main() -> Result<()> {
         pages: Arc::new(http::Pages::new(&short_name, &title)),
         auth,
         playlists,
-        ingest,
-        jellyfin,
+        fetcher,
+        library,
         spotify,
     };
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));

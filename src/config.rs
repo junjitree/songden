@@ -8,16 +8,10 @@ pub const DEFAULT_PORT: u16 = 8090;
 pub struct Config {
     pub port: u16,
     pub state_dir: PathBuf,
-    pub jellyfin_url: String,
-    pub jellyfin_token: String,
-    pub lidarr_url: String,
-    pub lidarr_key: String,
-    pub prowlarr_url: String,
-    pub prowlarr_key: String,
-    /// Where Lidarr puts music (the root folder for artists it adds).
-    pub music_root: String,
-    /// Lidarr quality profile, by name, for artists songden adds.
-    pub quality_profile: String,
+    /// Where songs are saved, one file per Spotify song.
+    pub music_dir: PathBuf,
+    /// The yt-dlp command (it needs Deno beside it for YouTube, and ffmpeg).
+    pub ytdlp: String,
     /// Argon2 PHC string of the shared family password (`songden hash-password`).
     pub password_hash: String,
     /// Unix seconds; sessions started before it are refused. Raise it to sign
@@ -76,14 +70,8 @@ impl Config {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(DEFAULT_PORT),
             state_dir: optional("STATE_DIR", "/state").into(),
-            jellyfin_url: optional("JELLYFIN_URL", "http://jellyfin:8096"),
-            jellyfin_token: required("JELLYFIN_TOKEN")?,
-            lidarr_url: optional("LIDARR_URL", "http://lidarr:8686"),
-            lidarr_key: required("LIDARR_KEY")?,
-            prowlarr_url: optional("PROWLARR_URL", "http://prowlarr:9696"),
-            prowlarr_key: required("PROWLARR_KEY")?,
-            music_root: optional("MUSIC_ROOT", "/data/media/music"),
-            quality_profile: optional("LIDARR_QUALITY_PROFILE", "Standard"),
+            music_dir: optional("MUSIC_DIR", "/music").into(),
+            ytdlp: optional("YTDLP", "yt-dlp"),
             password_hash: required("FAMILY_PASSWORD_HASH")?,
             sessions_since: optional("SESSIONS_SINCE", "0").parse().unwrap_or(0),
             secure_cookies: optional("SECURE_COOKIES", "true") != "false",

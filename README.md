@@ -1,13 +1,13 @@
 # songden
 
 A self-hosted, kid-safe music player inspired by Yoto and Toniebox: curated
-Spotify playlists, played from your own Jellyfin library.
+Spotify playlists, with every song kept on your own server.
 
 **songden** is a calm, locked-down music player for one small listener. It takes
 the idea behind screen-light kids' players like Yoto and Toniebox — a few big,
 obvious controls, music a grown-up picked, nothing to wander off into — and
-builds it from what a homelab already has: playlists curated in Spotify, songs
-stored in your own Jellyfin library, and an iPad or iPhone running it as a
+builds it from what a homelab already has: playlists curated in Spotify, each
+song fetched once onto your own server, and an iPad or iPhone running it as a
 home-screen app.
 
 _Yoto and Toniebox are trademarks of their respective owners. songden is an
@@ -32,12 +32,12 @@ a long hold instead, and leads back on its own.
   page (a tap does nothing), paste a Spotify playlist's share link, done. Remove
   one with a confirming second tap. The page goes back to the playlists by
   itself after 30 seconds untouched.
-- **Songs download themselves.** Songs that are not in Jellyfin yet are looked
-  up and handed to Lidarr. When Lidarr's own search finds nothing (soundtracks
-  often: their catalogue names never match how releases are named), songden
-  searches your indexers through Prowlarr by Spotify's album name and offers the
-  best few MP3 releases (standard editions first; never lossless) to Lidarr,
-  which still checks a release is that album before importing it.
+- **Songs fetch themselves, one by one.** Each song on a playlist is looked up
+  on YouTube Music (then YouTube) with yt-dlp and saved on the server. A result
+  only counts if its length is within a few seconds of Spotify's and it isn't a
+  version the playlist didn't ask for (live, cover, karaoke, sped up…), so the
+  listener gets the recording they know. Songs not found show on the grown-ups'
+  page and are retried when asked.
 - **One family password.** A device signs in once and stays signed in for a
   year, renewed whenever it is used.
 - **Offline play.** Songs are saved on the device after their first play.
@@ -45,30 +45,31 @@ a long hold instead, and leads back on its own.
 ## How it works
 
 ```
-Spotify (public pages)      Jellyfin           Lidarr + Prowlarr
-  playlist + song pages      the songs           downloads missing albums
-          \                     |                     /
-           +------------- songden server ------------+
-                                |
-                     the page on the device
+Spotify (public pages)            YouTube (yt-dlp)
+  which songs, their lengths        the audio, fetched once
+            \                         /
+             +---- songden server ----+   songs kept on disk
+                         |
+              the page on the device
 ```
 
 - **No Spotify login and no developer app.** Playlists are read from Spotify's
-  public embed pages, and each song's album from its public song page. Playlists
+  public embed pages, and each song's cover from its public song page. Playlists
   must be public. Spotify's embed page lists at most 100 songs.
-- **The device only ever talks to songden.** songden holds the Jellyfin, Lidarr
-  and Prowlarr keys and serves only songs that are on a current playlist.
+- **The device only ever talks to songden,** which serves only songs that are on
+  a current playlist.
 - **Spotify is read only when a grown-up asks:** adding a playlist, or "Check
   for new songs" on the grown-ups' page. The listener's playlists never change
-  under them by themselves. Songs that finish downloading still appear on their
-  own: while a playlist has songs waiting, opening the app re-checks the library
-  (not Spotify), at most every 5 minutes. Nothing runs on a timer.
+  under them by themselves; songs that finish downloading simply appear. Nothing
+  runs on a timer.
+- **Audio** is what YouTube serves, usually AAC around 130 kbps: plenty for a
+  tablet speaker or headphones. yt-dlp is updated each time the container
+  starts, because YouTube regularly breaks older versions.
 
 ## Running it
 
-You need Jellyfin with a music library. Lidarr (and Prowlarr) are only needed
-for the automatic downloads; Lidarr's root folder should be the folder that
-Jellyfin library reads.
+Docker, and a disk for the songs (a few MB each). The image carries yt-dlp, Deno
+and ffmpeg.
 
 1. `cp .env.example .env`, fill it in, `chmod 600 .env`.
 2. Hash the family password and put the hash in `.env`:

@@ -1,6 +1,5 @@
-# songden next to an existing Jellyfin / Lidarr / Prowlarr stack. Put it behind
-# your HTTPS reverse proxy (the session cookie is Secure); it serves plain HTTP
-# on 8090.
+# songden on its own. Put it behind your HTTPS reverse proxy (the session cookie
+# is Secure); it serves plain HTTP on 8090.
 services:
   songden:
     build: .
@@ -8,6 +7,7 @@ services:
     env_file: .env
     volumes:
       - ./songden-state:/state
+      - ./songden-music:/music
     ports:
       - 127.0.0.1:8090:8090
     restart: unless-stopped
