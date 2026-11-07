@@ -129,21 +129,36 @@
   .playing .play .pause-icon { display: block; }
 
   /* now playing */
-  .player { min-height: 100%; display: grid; grid-template-rows: 1fr auto auto auto; place-items: center; gap: 2.5vh; padding-bottom: 2vh; }
+  .player { min-height: 100%; display: grid; grid-template-rows: 1fr auto auto auto auto; place-items: center; gap: 2.5vh; padding-bottom: 2vh; }
   .player .art { width: min(78vw, 42vh, 520px); aspect-ratio: 1; border-radius: 28px; border: 6px solid var(--button); background: var(--button) center / cover no-repeat; box-shadow: 0 18px 40px var(--shadow); transition: transform 0.4s ease; }
   .playing .player .art { transform: scale(1.03) rotate(-1deg); }
-  .player .info { text-align: center; max-width: 90vw; }
-  .player .t { font-size: clamp(22px, 4vh, 38px); font-weight: 800; line-height: 1.15; }
-  .player .a { margin-top: 6px; font-size: clamp(14px, 2.1vh, 19px); color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The controls never move: the title always takes exactly two lines (longer
+     names end in "…"), the artist exactly one, the times a fixed width. */
+  .player .info { text-align: center; width: min(90vw, 560px); }
+  .player .t {
+    font-size: clamp(22px, 4vh, 38px); font-weight: 800; line-height: 1.15; height: 2.3em;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  }
+  .player .a { margin-top: 6px; font-size: clamp(14px, 2.1vh, 19px); line-height: 1.3; height: 1.3em; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seek span { min-width: 3.2em; text-align: center; }
   .player .controls { --lion: clamp(96px, 14vh, 140px); margin-block: var(--mane-reach); }
+  /* seeking: a thick track and a big handle, easy for small fingers */
+  .seek { width: min(86vw, 520px); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; font-size: 14px; font-weight: 700; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .seek input { -webkit-appearance: none; appearance: none; width: 100%; height: 36px; background: transparent; margin: 0; touch-action: none; }
+  .seek input::-webkit-slider-runnable-track { height: 10px; border-radius: 5px; background: linear-gradient(to right, var(--mane) var(--done, 0%), var(--button) var(--done, 0%)); }
+  .seek input::-moz-range-track { height: 10px; border-radius: 5px; background: var(--button); }
+  .seek input::-moz-range-progress { height: 10px; border-radius: 5px; background: var(--mane); }
+  .seek input::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; margin-top: -9px; border-radius: 50%; background: var(--face); border: 3px solid var(--mane); box-shadow: 0 3px 8px var(--shadow); }
+  .seek input::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--face); border: 3px solid var(--mane); box-shadow: 0 3px 8px var(--shadow); }
   .player .skip { width: clamp(64px, 9vh, 96px); height: clamp(64px, 9vh, 96px); }
-  .waiting { color: var(--ink-soft); font-size: 15px; min-height: 1em; text-align: center; }
+  .waiting { color: var(--ink-soft); font-size: 15px; line-height: 1.3; height: 1.3em; text-align: center; }
   @media (orientation: landscape) and (min-width: 700px) {
-    .player { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 1fr auto auto auto 1fr; column-gap: 6vw; }
-    .player .art { grid-row: 1 / 6; width: min(42vw, 66vh, 560px); }
+    .player { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 1fr auto auto auto auto 1fr; column-gap: 6vw; }
+    .player .art { grid-row: 1 / 7; width: min(42vw, 66vh, 560px); }
     .player .info { grid-column: 2; grid-row: 2; width: 100%; }
-    .player .controls { grid-column: 2; grid-row: 3; }
-    .player .waiting { grid-column: 2; grid-row: 4; }
+    .player .seek { grid-column: 2; grid-row: 3; width: min(100%, 520px); }
+    .player .controls { grid-column: 2; grid-row: 4; }
+    .player .waiting { grid-column: 2; grid-row: 5; }
   }
 
   /* the player bar, on the tiles while something is playing */
@@ -219,6 +234,7 @@
   <div class="player">
     <div class="art" id="p-art"></div>
     <div class="info"><div class="t" id="p-title"></div><div class="a" id="p-artist"></div></div>
+    <div class="seek"><span id="t-pos">0:00</span><input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek"><span id="t-dur">0:00</span></div>
     <div class="controls" id="p-controls"></div>
     <p class="waiting" id="p-waiting"></p>
   </div>
@@ -240,7 +256,7 @@
   </div>
 </section>
 
-<footer class="bar">
+<footer class="bar" id="bar">
   <button class="now" id="now" aria-label="Now playing">
     <div class="art" id="now-art"></div><div class="text"><div class="t" id="now-title"></div><div class="a" id="now-artist"></div></div>
   </button>
@@ -397,7 +413,10 @@ async function openPlaylist(id) {
 }
 
 $("back").addEventListener("click", goHome);
-$("now").addEventListener("click", () => { if (queue) show("player"); });
+// Anywhere on the player bar except its buttons brings back the full screen.
+$("bar").addEventListener("click", (e) => {
+  if (queue && !e.target.closest(".controls")) show("player");
+});
 
 // ---- sign-in ---------------------------------------------------------------
 
@@ -430,10 +449,10 @@ function render() {
     $("p-art").style.cssText = art(t ? `/api/cover/${t.id}` : `/api/pcover/${queue.id}`);
     $("p-title").textContent = t ? t.title : queue.name;
     $("p-artist").textContent = t ? t.artist : "";
-    const waiting = queue.missing ? queue.missing.length : 0;
+    // Only what the listener needs; download counts are on the grown-ups' page.
     $("p-waiting").textContent = !queue.tracks.length ? "Getting the songs ready…"
       : failures >= queue.tracks.length ? "Can't play right now. Try again soon."
-      : waiting ? `${waiting} more on the way` : "";
+      : "";
   }
   if (!t) return;
   $("now-art").style.cssText = art(`/api/cover/${t.id}`);
@@ -501,7 +520,41 @@ audio.addEventListener("error", () => {
 });
 
 let lastSave = 0;
+// ---- seeking ----------------------------------------------------------------
+
+const SEEK_STEPS = 1000; // the slider's max: fine enough for any song length
+const seek = $("seek");
+let seeking = false;     // while a finger is on the slider, the song's clock doesn't move it
+
+const clock = (s) => Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00";
+
+function showTime(position) {
+  const d = audio.duration;
+  const fraction = Number.isFinite(d) && d > 0 ? position / d : 0;
+  if (!seeking) seek.value = Math.round(fraction * SEEK_STEPS);
+  seek.style.setProperty("--done", `${(seeking ? seek.value / SEEK_STEPS : fraction) * 100}%`);
+  $("t-pos").textContent = clock(position);
+  $("t-dur").textContent = clock(d);
+}
+
+seek.addEventListener("pointerdown", () => { seeking = true; });
+seek.addEventListener("input", () => {
+  seeking = true;
+  const d = audio.duration;
+  if (Number.isFinite(d)) showTime((seek.value / SEEK_STEPS) * d);
+});
+seek.addEventListener("change", () => {
+  const d = audio.duration;
+  if (Number.isFinite(d)) audio.currentTime = (seek.value / SEEK_STEPS) * d;
+  seeking = false;
+  showTime(audio.currentTime);
+});
+for (const ev of ["loadedmetadata", "durationchange", "seeked", "emptied"]) {
+  audio.addEventListener(ev, () => showTime(audio.currentTime));
+}
+
 audio.addEventListener("timeupdate", () => {
+  showTime(audio.currentTime);
   if (Date.now() - lastSave < SAVE_EVERY_MS) return;
   lastSave = Date.now();
   savePosition(audio.currentTime);

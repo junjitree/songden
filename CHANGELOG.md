@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   where each playlist was left), a now-playing screen, and a player bar on the
   tiles, each with previous / play-pause / next. The play button is a lion; the
   whole lion is the tap target.
+- Seeking on the now-playing screen: a thick track with a large handle and
+  elapsed/total times. The controls never move: the title always takes two lines
+  (longer ones end in an ellipsis), the artist one, the times a fixed width.
+  Anywhere on the player bar except its buttons opens the full screen.
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
   playlist by its share link, remove one with a confirming second tap, see what
   is downloaded and what is still waiting, with a Downloads card listing each
