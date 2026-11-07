@@ -209,6 +209,9 @@
   .msg.err { color: var(--danger); font-weight: 700; }
   details summary { cursor: pointer; color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
   details li { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+  /* a long download list stays one card tall and scrolls inside it */
+  #dl-list { max-height: 280px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+  .card-head .count { font-size: 14px; color: var(--ink-soft); font-weight: 700; }
 </style>
 </head>
 <body data-view="home">
@@ -266,7 +269,10 @@
       <div id="parent-list"></div>
       <p class="msg" id="refresh-msg"></p>
     </div>
-    <div class="card" id="dl-card" hidden><h2>Downloads</h2><div id="dl-list"></div></div>
+    <div class="card" id="dl-card" hidden>
+      <div class="card-head"><h2>Downloads</h2><span class="count" id="dl-count"></span></div>
+      <div id="dl-list"></div>
+    </div>
   </div>
 </section>
 
@@ -739,6 +745,9 @@ async function loadParents(url = "/api/parents/status", opts) {
       el("div", { class: "text" },
         el("div", { class: "t" }, d.name),
         el("div", { class: "a" }, `${d.artist} · ${label[d.state] || d.state}`)))));
+  const waiting = status.downloads.filter((d) => d.state === "downloading").length;
+  const missing = status.downloads.length - waiting;
+  $("dl-count").textContent = [waiting && `${waiting} waiting`, missing && `${missing} not found`].filter(Boolean).join(" · ");
   $("dl-card").hidden = !status.downloads.length;
   return true;
 }
