@@ -198,6 +198,17 @@ async fn serve(path: std::path::PathBuf, req: Request) -> Result<Response> {
         .await
         .map_err(|e| Error::Internal(e.to_string()))?
         .map(Body::new);
+    // The guessed type for .m4a is "audio/m4a", which isn't a registered type;
+    // Safari wants the standard "audio/mp4" for AAC in an MP4 container.
+    if res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        == Some("audio/m4a")
+    {
+        res.headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/mp4"));
+    }
     res.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=86400"),
