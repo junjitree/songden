@@ -236,7 +236,7 @@
       <p class="msg" id="add-msg">In Spotify: the playlist → ⋯ → Share → Copy link. It must be public.</p>
     </div>
     <div class="card"><h2>Playlists</h2><div id="parent-list"></div></div>
-    <p class="msg" id="dl-msg"></p>
+    <div class="card" id="dl-card" hidden><h2>Downloads</h2><div id="dl-list"></div></div>
   </div>
 </section>
 
@@ -585,10 +585,12 @@ async function loadParents() {
       remove);
   });
   $("parent-list").replaceChildren(...(rows.length ? rows : [el("p", { class: "msg" }, "None yet.")]));
-  const notes = [];
-  if (status.downloading) notes.push(`Downloading ${plural(status.downloading, "album")}.`);
-  if (status.failed.length) notes.push(`Couldn't find: ${status.failed.map((f) => f.album).join(", ")}.`);
-  $("dl-msg").textContent = notes.join(" ");
+  // one row per album still on its way; the card hides when there are none
+  const label = { downloading: "Downloading…", "not-found": "Not found yet, will try again later" };
+  $("dl-list").replaceChildren(...status.albums.map((a) =>
+    el("div", { class: "row" },
+      el("div", { class: "text" }, el("div", { class: "t" }, a.album), el("div", { class: "a" }, label[a.state] || a.state)))));
+  $("dl-card").hidden = !status.albums.length;
 }
 
 $("add-form").addEventListener("submit", async (e) => {

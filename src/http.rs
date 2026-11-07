@@ -243,20 +243,21 @@ async fn parents_status(State(state): State<AppState>) -> Json<Value> {
             None => json!({ "id": id, "name": "Loading…", "count": 0, "total": 0, "missing": [] }),
         })
         .collect();
-    let albums = state.ingest.albums();
-    let count = |s: AlbumState| albums.values().filter(|a| a.state == s).count();
-    let failed: BTreeMap<&str, &str> = albums
+    // Albums still on their way, one row each (an album asked for twice shows once).
+    let records = state.ingest.albums();
+    let pending: BTreeMap<&str, &str> = records
         .values()
-        .filter(|a| a.state == AlbumState::Failed)
-        .map(|a| (a.album.as_str(), a.note.as_str()))
+        .filter_map(|a| match a.state {
+            AlbumState::Downloading => Some((a.album.as_str(), "downloading")),
+            AlbumState::Failed => Some((a.album.as_str(), "not-found")),
+            AlbumState::Imported => None,
+        })
         .collect();
-    let failed: Vec<Value> = failed
+    let albums: Vec<Value> = pending
         .into_iter()
-        .map(|(album, note)| json!({ "album": album, "note": note }))
+        .map(|(album, state)| json!({ "album": album, "state": state }))
         .collect();
-    Json(
-        json!({ "playlists": lists, "downloading": count(AlbumState::Downloading), "failed": failed }),
-    )
+    Json(json!({ "playlists": lists, "albums": albums }))
 }
 
 #[derive(Deserialize)]

@@ -166,6 +166,40 @@ pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
     picks.into_iter().map(|p| p.2).collect()
 }
 
+/// The name a fallback release is offered to Lidarr under. Lidarr parses it, so
+/// it must read as "Artist - Album (Year)" and carry a quality its profiles
+/// recognise: a bare "MP3" parses as Unknown, which the Standard profile refuses.
+/// The bitrate is a label for Lidarr's checks; the files decide what is imported.
+pub fn clean_title(artist: &str, album: &str, year: &str) -> String {
+    format!("{artist} - {album} ({year}) [MP3-320]")
+}
+
+/// The `/release/push` body for an indexer result.
+///
+/// Prowlarr hands out links to itself as `localhost`, which means each container
+/// itself; Lidarr and the download client reach it by name, so both links are
+/// rewritten. A "magnet" that is really an http link to Prowlarr (which then
+/// redirects to the magnet) goes in as the download link: Lidarr follows that
+/// redirect itself, while a download client given it as a magnet silently drops
+/// it.
+pub fn push_body(result: &Value, title: &str, prowlarr_url: &str) -> Value {
+    let link = |key: &str| {
+        result[key]
+            .as_str()
+            .map(|u| u.replace("http://localhost:9696", prowlarr_url))
+    };
+    let (download, magnet) = match (link("downloadUrl"), link("magnetUrl")) {
+        (Some(d), m) => (Some(d), m.filter(|m| m.starts_with("magnet:"))),
+        (None, Some(m)) if m.starts_with("magnet:") => (None, Some(m)),
+        (None, m) => (m, None),
+    };
+    json!({
+        "title": title, "downloadUrl": download, "magnetUrl": magnet, "protocol": "torrent",
+        "publishDate": result["publishDate"], "indexer": result["indexer"],
+        "size": result["size"], "seeders": result["seeders"],
+    })
+}
+
 struct Arr {
     client: reqwest::Client,
     url: String,
@@ -597,15 +631,8 @@ impl Worker {
             .take(FALLBACK_TRIES)
         {
             let raw_title = r["title"].as_str().unwrap_or_default();
-            let clean = format!("{artist} - {title} ({year}) [MP3]");
-            // Prowlarr hands out links to itself as localhost; Lidarr reaches it by name.
-            let url = r["downloadUrl"]
-                .as_str()
-                .map(|u| u.replace("http://localhost:9696", &self.prowlarr_url));
-            let push = json!({
-                "title": clean, "downloadUrl": url, "magnetUrl": r["magnetUrl"], "protocol": "torrent",
-                "publishDate": r["publishDate"], "indexer": r["indexer"], "size": r["size"], "seeders": r["seeders"],
-            });
+            let clean = clean_title(&artist, title, year);
+            let push = push_body(r, &clean, &self.prowlarr_url);
             match self.lidarr.post("/release/push", push).await {
                 Ok(out) => {
                     let decision = if out.is_array() { out[0].clone() } else { out };
@@ -685,6 +712,43 @@ mod tests {
                 "Moana (Original Motion Picture Soundtrack) (2020) Mp3 [PMEDIA]",
                 "Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) Mp3 320",
             ]
+        );
+    }
+
+    #[test]
+    fn prowlarr_links_reach_prowlarr_and_redirects_go_as_downloads() {
+        let p = "http://prowlarr:9696";
+        // Pirate Bay through Prowlarr: the "magnet" is an http link to Prowlarr
+        let tpb = json!({"magnetUrl": "http://localhost:9696/2/download?link=x", "title": "t"});
+        let body = push_body(&tpb, "A - B (2016) [MP3-320]", p);
+        assert_eq!(
+            body["downloadUrl"],
+            "http://prowlarr:9696/2/download?link=x"
+        );
+        assert!(body["magnetUrl"].is_null());
+        // a plain torrent link
+        let lime = json!({"downloadUrl": "http://localhost:9696/3/download?x", "title": "t"});
+        assert_eq!(
+            push_body(&lime, "t", p)["downloadUrl"],
+            "http://prowlarr:9696/3/download?x"
+        );
+        // a real magnet stays a magnet
+        let real = json!({"magnetUrl": "magnet:?xt=urn:btih:abc", "title": "t"});
+        let body = push_body(&real, "t", p);
+        assert_eq!(body["magnetUrl"], "magnet:?xt=urn:btih:abc");
+        assert!(body["downloadUrl"].is_null());
+    }
+
+    #[test]
+    fn offered_names_carry_a_quality_lidarr_recognises() {
+        let t = clean_title(
+            "Lin‐Manuel Miranda",
+            "Moana: Original Motion Picture Soundtrack",
+            "2016",
+        );
+        assert_eq!(
+            t,
+            "Lin‐Manuel Miranda - Moana: Original Motion Picture Soundtrack (2016) [MP3-320]"
         );
     }
 

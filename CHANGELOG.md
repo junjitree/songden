@@ -14,8 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whole lion is the tap target.
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
   playlist by its share link, remove one with a confirming second tap, see what
-  is downloaded and what is still waiting. Returns to the playlists after 30
-  seconds untouched.
+  is downloaded and what is still waiting, with a Downloads card listing each
+  album still on its way. Returns to the playlists after 30 seconds untouched.
 - Playlists read from Spotify's public pages (no login, no developer app) and
   matched to songs in Jellyfin by title, credit tails ignored and versions
   (reprise, instrumental) kept apart.
@@ -23,6 +23,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for albums Lidarr's own search cannot find. Downloads are MP3, standard
   edition first: the fallback never offers lossless releases, and artists
   songden adds get the `LIDARR_QUALITY_PROFILE` profile (default "Standard").
+  Releases are offered under a name carrying a quality Lidarr recognises
+  (MP3-320), and Prowlarr's magnet-redirect links go to Lidarr as download links
+  so the download client actually receives them.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
