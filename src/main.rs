@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
     let fetcher = Fetcher::start(
         library.clone(),
         cfg.ytdlp.clone(),
+        cfg.fetch_parallel,
         &cfg.state_dir,
         spotify.clone(),
     );

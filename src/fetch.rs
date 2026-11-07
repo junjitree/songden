@@ -39,10 +39,6 @@ const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
 const SEARCH_RESULTS: u32 = 6;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(120);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
-/// Songs fetched side by side. Kept low on purpose: many parallel requests from
-/// one home address is what trips YouTube's bot checks, which then stop every
-/// download for a while.
-const PARALLEL_FETCHES: usize = 3;
 const TAG_TIMEOUT: Duration = Duration::from_secs(60);
 /// How far a result's length may be from Spotify's: this many seconds, or this
 /// share of the song if that is more.
@@ -319,13 +315,21 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
-    pub fn start(library: Library, ytdlp: String, state_dir: &Path, spotify: Spotify) -> Self {
+    /// `parallel`: songs fetched side by side (at least one).
+    pub fn start(
+        library: Library,
+        ytdlp: String,
+        parallel: usize,
+        state_dir: &Path,
+        spotify: Spotify,
+    ) -> Self {
         let failures = Arc::new(Mutex::new(JsonStore::load(state_dir, "failures.json")));
         let queued = Arc::new(Mutex::new(BTreeMap::new()));
         let (tx, rx) = mpsc::unbounded_channel();
         let worker = Worker {
             library,
             ytdlp,
+            parallel: parallel.max(1),
             spotify,
             failures: failures.clone(),
             queued: queued.clone(),
@@ -382,6 +386,7 @@ impl Fetcher {
 struct Worker {
     library: Library,
     ytdlp: String,
+    parallel: usize,
     spotify: Spotify,
     failures: Arc<Mutex<JsonStore<BTreeMap<String, Failure>>>>,
     queued: Arc<Mutex<BTreeMap<String, Track>>>,
@@ -436,8 +441,8 @@ impl Worker {
                     q.insert(t.id().unwrap_or_default().to_string(), t.clone());
                 }
             }
-            // up to PARALLEL_FETCHES at once; the batch finishes before the next
-            let slots = Arc::new(Semaphore::new(PARALLEL_FETCHES));
+            // up to `parallel` at once; the batch finishes before the next
+            let slots = Arc::new(Semaphore::new(self.parallel));
             let mut running = JoinSet::new();
             for track in todo {
                 let worker = self.clone();

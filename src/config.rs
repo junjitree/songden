@@ -12,6 +12,10 @@ pub struct Config {
     pub music_dir: PathBuf,
     /// The yt-dlp command (it needs Deno beside it for YouTube, and ffmpeg).
     pub ytdlp: String,
+    /// Songs fetched side by side. One by default: many parallel requests from
+    /// one home address trips YouTube's bot checks, which then stop every
+    /// download for a while. A few at once speeds up a big first import.
+    pub fetch_parallel: usize,
     /// Argon2 PHC string of the shared family password (`songden hash-password`).
     pub password_hash: String,
     /// Unix seconds; sessions started before it are refused. Raise it to sign
@@ -72,6 +76,7 @@ impl Config {
             state_dir: optional("STATE_DIR", "/state").into(),
             music_dir: optional("MUSIC_DIR", "/music").into(),
             ytdlp: optional("YTDLP", "yt-dlp"),
+            fetch_parallel: optional("FETCH_PARALLEL", "1").parse().unwrap_or(1),
             password_hash: required("FAMILY_PASSWORD_HASH")?,
             sessions_since: optional("SESSIONS_SINCE", "0").parse().unwrap_or(0),
             secure_cookies: optional("SECURE_COOKIES", "true") != "false",
