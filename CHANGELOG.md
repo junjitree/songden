@@ -74,8 +74,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the singer. Most of Moana's score is only on YouTube this way.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
-- Offline play: songs are saved on the device after their first play and
-  answered in byte ranges, and dropped once they leave every playlist.
+- Offline play: while the app is open every song is saved on the device, one at
+  a time and without being played first, and the grown-ups' page counts them.
+  Saved songs are answered in byte ranges and dropped once they leave every
+  playlist. Offline, a playlist with no saved songs is dimmed and can't be
+  tapped.
 - `LISTENER` and `PLAYLIST_PREFIX` settings for the app's name, the title and
   the playlist-name prefix trimmed on tiles.
 - `songden hash-password` to hash the family password from stdin.

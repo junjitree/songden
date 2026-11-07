@@ -43,7 +43,9 @@ a long hold instead.
   page and are retried when asked.
 - **One family password.** A device signs in once and stays signed in for a
   year, renewed whenever it is used.
-- **Offline play.** Songs are saved on the device after their first play.
+- **Offline play.** While the app is open, every song is saved on the device,
+  one at a time, without having to be played first. The grown-ups' page shows
+  how many are saved.
 
 ## How it works
 

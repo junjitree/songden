@@ -2,9 +2,9 @@
 // Offline copy for songden.
 // - The page and the playlists: network first, last good copy when offline. Each
 //   fresh playlist list also prunes saved songs that are on no playlist any more.
-// - Songs: the first play streams from the server and saves the whole file in the
-//   background; after that they play from the device. Safari asks for audio in
-//   byte ranges, so saved songs are answered with 206 slices.
+// - Songs: the page asks for each whole song while the app is open, and that is
+//   what saves it (see saveSongs in index.html). A player asks in byte ranges: a
+//   song not saved yet just streams, and a saved one is answered with 206 slices.
 // - Covers: cache first.
 // Requests other than GET (signing in, the parents' page) are never touched.
 
@@ -12,7 +12,6 @@ const SHELL = "songden-shell-v1";
 const AUDIO = "songden-audio-v1";
 const COVERS = "songden-covers-v1";
 const SHELL_FILES = ["/", "/manifest.webmanifest", "/icon-180.png", "/icon-192.png", "/icon-512.png"];
-const saving = new Set();
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -80,18 +79,24 @@ async function prune(keep) {
 
 async function song(event, path) {
   const cache = await caches.open(AUDIO);
+  const range = event.request.headers.get("range");
   const hit = await cache.match(path);
-  if (hit) return slice(hit, event.request.headers.get("range"));
-  if (!saving.has(path)) {
-    saving.add(path);
-    event.waitUntil(
-      fetch(path)
-        .then((res) => (res.status === 200 ? cache.put(path, res) : undefined))
-        .catch((err) => console.warn("could not save", path, err))
-        .finally(() => saving.delete(path)),
-    );
+  if (hit) return slice(hit, range);
+  return range ? fetch(event.request) : save(cache, path);
+}
+
+// Answers once the whole song is stored. A download cut short rejects, so a part
+// of a song is never kept; 507 tells the page the device has no room for it.
+async function save(cache, path) {
+  const res = await fetch(path);
+  if (res.status !== 200) return res;
+  try {
+    await cache.put(path, res);
+  } catch (err) {
+    if (err.name === "QuotaExceededError") return new Response(null, { status: 507 });
+    throw err;
   }
-  return fetch(event.request);
+  return cache.match(path);
 }
 
 async function slice(cached, range) {

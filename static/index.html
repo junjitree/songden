@@ -104,7 +104,7 @@
     transition: transform 0.12s ease;
   }
   .tile:active .art { transform: scale(0.95); }
-  .tile.empty .art { opacity: 0.55; }
+  .tile.empty .art, .tile:disabled .art { opacity: 0.55; }
   .tile.current .art { border-color: var(--mane); }
   .tile .name { font-size: 22px; font-weight: 800; line-height: 1.1; padding: 0 4px; }
   .tile .sub { font-size: 15px; color: var(--ink-soft); padding: 0 4px; margin-top: -6px; }
@@ -312,6 +312,10 @@
       <p class="msg" id="refresh-msg"></p>
       <div id="parent-list"></div>
     </div>
+    <div class="card">
+      <h2>On this device</h2>
+      <p class="msg" id="device-msg"></p>
+    </div>
     <div class="card" id="dl-card" hidden>
       <div class="card-head"><h2>Downloads</h2><span class="count" id="dl-count"></span></div>
       <div id="dl-list"></div>
@@ -358,6 +362,8 @@ let order = [];     // the order songs play in (indexes into queue.tracks)
 let pos = 0;        // where in `order` the song playing is
 let shown = null;   // the playlist on the song list screen
 let failures = 0;   // songs in a row that couldn't play
+let tileData = [];  // the playlists on the home screen
+let wanted = [];    // ids of every song on a playlist, ready on the server
 
 const store = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
@@ -425,10 +431,13 @@ async function goHome() {
   show("home");
   try {
     await loadSettings();
-    const { playlists } = await getJSON("/api/playlists");
-    renderTiles(playlists);
+    const { playlists, keep } = await getJSON("/api/playlists");
+    tileData = playlists;
+    renderTiles();
     // fetch every playlist's songs now, so tapping a tile can start playing at once
     await Promise.all(playlists.map((p) => refreshList(p.id)));
+    wanted = keep;
+    saveSongs();
   } catch (err) {
     if (err instanceof SignedOut) signedOut();
     else console.warn("playlists unavailable", err);
@@ -454,17 +463,20 @@ async function refreshList(id) {
   }
 }
 
-function renderTiles(playlists) {
+function renderTiles() {
   const tiles = $("tiles");
   tiles.replaceChildren();
-  if (!playlists.length) {
+  if (!tileData.length) {
     tiles.append(el("p", { class: "note" }, "No playlists yet. A grown-up can add them with the +."));
     return;
   }
-  for (const p of playlists) {
+  for (const p of tileData) {
     const current = queue && queue.id === p.id;
     const open = () => (settings.songList ? openList(p.id) : openPlaylist(p.id));
-    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}${current ? " current" : ""}`, onclick: open },
+    const attrs = { class: `tile${p.count ? "" : " empty"}${current ? " current" : ""}`, onclick: open };
+    // nothing to tap that can't play: offline, a playlist with no saved songs rests
+    if (cutOff() && !hasSavedSong(p.id)) attrs.disabled = "";
+    tiles.append(el("button", attrs,
       el("div", { class: "art", style: art(`/api/pcover/${p.id}`) }),
       el("div", { class: "name" }, p.name),
       el("div", { class: "sub" }, p.count ? plural(p.count, "song") : "Getting songs…")));
@@ -957,10 +969,101 @@ $("add-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---- saving songs on this device ---------------------------------------------
+
+// While the app is open, every song is saved, one at a time, so none has to be
+// played first. iOS lets a home-screen app download only while it is open, so
+// this picks up where it stopped: when the app comes back, or the network does.
+// sw.js stores what is asked for here; nothing polls.
+const worker = "serviceWorker" in navigator
+  ? navigator.serviceWorker.register("/sw.js")
+  : Promise.reject(new Error("no service worker"));
+worker.catch((err) => console.warn("no offline cache", err));
+
+const onDevice = new Set();  // ids of the songs saved here
+let saving = false;          // the loop below is running
+let unreachable = false;     // the last request to the server failed
+let noRoom = false;          // the device refused to store another song
+let cantSave = false;        // this browser has no offline cache
+
+const cutOff = () => unreachable || !navigator.onLine;
+const hasSavedSong = (id) => Boolean(lists[id]?.tracks.some((t) => onDevice.has(t.id)));
+
+function showSaved() {
+  const have = wanted.filter((id) => onDevice.has(id)).length;
+  const count = `${have} of ${plural(wanted.length, "song")} saved for offline`;
+  $("device-msg").textContent =
+    cantSave ? "This browser can't save songs for offline."
+    : !wanted.length ? "No songs to save yet."
+    : noRoom ? `${count}. This device is out of room for more.`
+    : have === wanted.length ? `All ${plural(have, "song")} are saved for offline.`
+    : saving && !cutOff() ? `${count}. Keep the app open while the rest save.`
+    : `${count}. The rest save when the app is open and online.`;
+}
+
+// The page only goes through the worker once the worker controls it, which on a
+// first visit is after the playlists were read: read them again so it keeps them.
+async function workerReady() {
+  await worker;
+  if (navigator.serviceWorker.controller) return;
+  await new Promise((done) => navigator.serviceWorker.addEventListener("controllerchange", done, { once: true }));
+  await getJSON("/api/playlists");
+  await Promise.all(tileData.map((p) => Promise.all([refreshList(p.id), fetch(`/api/pcover/${p.id}`)])));
+}
+
+async function saveSongs() {
+  if (saving) return;
+  saving = true;
+  noRoom = false;
+  const skipped = new Set();  // songs the server wouldn't give this time
+  try {
+    await workerReady();
+    navigator.storage?.persist?.().catch((err) => console.warn("storage may be cleared", err));
+    onDevice.clear();
+    for (const id of wanted) if (await caches.match(`/api/audio/${id}`)) onDevice.add(id);
+    renderTiles();
+    showSaved();
+    for (;;) {
+      // `wanted` is read afresh: it changes when the home screen reloads
+      const id = wanted.find((w) => !onDevice.has(w) && !skipped.has(w));
+      if (!id) break;
+      await fetch(`/api/cover/${id}`);
+      const res = await fetch(`/api/audio/${id}`);
+      if (unreachable) { unreachable = false; renderTiles(); }
+      if (res.status === 401) throw new SignedOut();
+      if (res.status === 507) { noRoom = true; break; }
+      if (res.ok) onDevice.add(id);
+      else {
+        console.warn("song not saved", id, res.status);
+        skipped.add(id);
+      }
+      showSaved();
+    }
+  } catch (err) {
+    console.warn("saving stopped", err);
+    if (err instanceof SignedOut) signedOut();
+    else if (err instanceof TypeError) unreachable = true;
+    else cantSave = true;
+    renderTiles();
+  } finally {
+    saving = false;
+    showSaved();
+  }
+}
+
+function networkChanged() {
+  if (navigator.onLine) unreachable = false;
+  renderTiles();
+  saveSongs();
+}
+addEventListener("online", networkChanged);
+addEventListener("offline", networkChanged);
+
 // ---- start -----------------------------------------------------------------
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
+  saveSongs();
   const view = document.body.dataset.view;
   if (view === "home") goHome();
   else if (view === "player" && queue) refreshList(queue.id).catch(signedOut);
@@ -983,7 +1086,6 @@ document.addEventListener("visibilitychange", () => {
     load(at, saved.time || 0);
     if (savedView === "player") show("player");
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("no offline cache", err));
 })();
 </script>
 </body>

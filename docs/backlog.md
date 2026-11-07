@@ -4,12 +4,12 @@ What is not done, and why. Delete an entry when it ships.
 
 ## Not verified yet
 
-- **The YouTube fetch path has not run end to end in songden itself.** The
-  pieces were checked by hand in a throwaway container on 2026-11-07 (yt-dlp
-  2026.10.26 with Deno: a YouTube Music song search, and a format-140 AAC
-  download of the matching length), and the matching rules have tests that fail
-  when each rule is broken. The worker's process handling, the rename into place
-  and the cover fetch have only run once deployed.
+- **Saving songs for offline has only run in headless Chromium on Linux.**
+  `saveSongs` in `index.html` and `save` in `sw.js` were driven there through a
+  proxy: a cut download, the server gone, a session ended and a small storage
+  quota. Whether iOS keeps the songs (`navigator.storage.persist` is asked, the
+  answer is not acted on) and how far a save gets before iOS suspends the app
+  are unknown.
 - **On a real iPad:** background play with the screen off, the service-worker
   audio cache (206 slices), the 5-second + hold, whether a tile tap starts sound
   right away (iOS only allows play inside a tap; songs are fetched ahead so the
