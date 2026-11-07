@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
             prowlarr_url: cfg.prowlarr_url.clone(),
             prowlarr_key: cfg.prowlarr_key.clone(),
             music_root: cfg.music_root.clone(),
+            quality_profile: cfg.quality_profile.clone(),
         },
         &cfg.state_dir,
         spotify.clone(),

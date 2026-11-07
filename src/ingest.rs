@@ -125,19 +125,20 @@ pub fn pick_catalogue<'a>(info: &TrackAlbum, candidates: &'a [Value]) -> Option<
         .map(|(_, c)| c)
 }
 
-/// Indexer results that look like this album, best first: the right edition,
-/// then lossy over lossless (smaller, and what the kid's iPad caches), then seeders.
+/// MP3 releases that look like this album, best first: the standard edition
+/// before a deluxe one (whatever Spotify's album is called), then by seeders.
+/// Lossless releases are never offered: they are many times the size, slower to
+/// fetch, and what a phone caches anyway is the MP3.
 pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
     let album_words: BTreeSet<String> = words(album).into_iter().collect();
     let want = core(album);
-    let deluxe = album_words.contains("deluxe");
-    let mut picks: Vec<(bool, bool, u64, &Value)> = results
+    let mut picks: Vec<(bool, u64, &Value)> = results
         .iter()
         .filter_map(|r| {
             let title = r["title"].as_str()?;
             let seeders = r["seeders"].as_u64().unwrap_or(0);
             let title_words: BTreeSet<String> = words(title).into_iter().collect();
-            if seeders < 1 || !want.is_subset(&title_words) {
+            if seeders < 1 || !want.is_subset(&title_words) || !title_words.contains("mp3") {
                 return None;
             }
             // "Moana 2" is not "Moana": a number right after one of the album's own
@@ -158,16 +159,11 @@ pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
             }
             // uploaders abbreviate Deluxe Edition as "D E"
             let is_deluxe = title_words.contains("deluxe") || title.to_lowercase().contains("d e)");
-            Some((
-                is_deluxe == deluxe,
-                !title_words.contains("flac"),
-                seeders,
-                r,
-            ))
+            Some((!is_deluxe, seeders, r))
         })
         .collect();
-    picks.sort_by_key(|p| std::cmp::Reverse((p.0, p.1, p.2)));
-    picks.into_iter().map(|p| p.3).collect()
+    picks.sort_by_key(|p| std::cmp::Reverse((p.0, p.1)));
+    picks.into_iter().map(|p| p.2).collect()
 }
 
 struct Arr {
@@ -223,6 +219,8 @@ impl Arr {
 }
 
 pub struct IngestConfig {
+    /// Lidarr quality profile (by name) for artists songden adds.
+    pub quality_profile: String,
     pub lidarr_url: String,
     pub lidarr_key: String,
     pub prowlarr_url: String,
@@ -254,6 +252,7 @@ impl Ingester {
             },
             prowlarr_url: cfg.prowlarr_url,
             music_root: cfg.music_root,
+            quality_profile: cfg.quality_profile,
             spotify,
             albums_of: JsonStore::load(state_dir, "track-albums.json"),
             albums: albums.clone(),
@@ -282,6 +281,7 @@ struct Worker {
     prowlarr: Arr,
     prowlarr_url: String,
     music_root: String,
+    quality_profile: String,
     spotify: Spotify,
     albums_of: JsonStore<BTreeMap<String, TrackAlbum>>,
     albums: Arc<Mutex<JsonStore<BTreeMap<String, AlbumRecord>>>>,
@@ -485,7 +485,7 @@ impl Worker {
         {
             Some(artist) => artist.clone(),
             None => {
-                let quality = self.lidarr.get("/qualityprofile", &[]).await?[0]["id"].clone();
+                let quality = self.quality_profile().await?;
                 let metadata = self.lidarr.get("/metadataprofile", &[]).await?[0]["id"].clone();
                 let mut artist = cand["artist"].clone();
                 artist["qualityProfileId"] = quality;
@@ -503,6 +503,23 @@ impl Worker {
         body["artist"] = artist;
         body["addOptions"] = json!({ "searchForNewAlbum": false });
         Ok(Some(self.lidarr.post("/album", body).await?))
+    }
+
+    /// The id of the configured quality profile; an error naming the ones that
+    /// exist if it isn't there.
+    async fn quality_profile(&self) -> Result<Value> {
+        let profiles = self.lidarr.get("/qualityprofile", &[]).await?;
+        let list = profiles.as_array().cloned().unwrap_or_default();
+        list.iter()
+            .find(|p| p["name"].as_str() == Some(self.quality_profile.as_str()))
+            .map(|p| p["id"].clone())
+            .ok_or_else(|| {
+                let names: Vec<&str> = list.iter().filter_map(|p| p["name"].as_str()).collect();
+                Error::Internal(format!(
+                    "Lidarr has no quality profile {:?} (it has {names:?}); set LIDARR_QUALITY_PROFILE",
+                    self.quality_profile
+                ))
+            })
     }
 
     /// Lidarr's own search; true if it grabbed a release.
@@ -580,12 +597,7 @@ impl Worker {
             .take(FALLBACK_TRIES)
         {
             let raw_title = r["title"].as_str().unwrap_or_default();
-            let format = if words(raw_title).iter().any(|w| w == "flac") {
-                "FLAC"
-            } else {
-                "MP3"
-            };
-            let clean = format!("{artist} - {title} ({year}) [{format}]");
+            let clean = format!("{artist} - {title} ({year}) [MP3]");
             // Prowlarr hands out links to itself as localhost; Lidarr reaches it by name.
             let url = r["downloadUrl"]
                 .as_str()
@@ -646,14 +658,16 @@ mod tests {
     }
 
     #[test]
-    fn releases_skip_sequels_and_other_languages() {
+    fn releases_are_mp3_standard_editions_first() {
         let results = vec![
-            json!({"title": "Moana 2 (Original Motion Picture Soundtrack) (2024) FLAC", "seeders": 19}),
+            json!({"title": "Moana 2 (Original Motion Picture Soundtrack) (2024) Mp3 320kbps", "seeders": 19}),
             json!({"title": "Various Artists Moana 2 (Russian Original Motion Picture Soundtrack) (2024) Mp3", "seeders": 1}),
+            json!({"title": "Moana (Russian Original Motion Picture Soundtrack) Mp3", "seeders": 30}),
             json!({"title": "Moana (Original Motion Picture Soundtrack) (2020) Mp3 [PMEDIA]", "seeders": 8}),
-            json!({"title": "VA Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) [24 96 FLAC]", "seeders": 10}),
-            json!({"title": "Moana: Original Motion Picture Soundtrack ( D E) [24-96 FLAC]", "seeders": 2}),
-            json!({"title": "Moana Soundtrack dead swarm", "seeders": 0}),
+            json!({"title": "Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) Mp3 320", "seeders": 25}),
+            json!({"title": "VA Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) [24 96 FLAC]", "seeders": 40}),
+            json!({"title": "Moana (Original Motion Picture Soundtrack) FLAC", "seeders": 50}),
+            json!({"title": "Moana Soundtrack Mp3 dead swarm", "seeders": 0}),
         ];
         let ranked = rank_releases(
             "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
@@ -663,20 +677,23 @@ mod tests {
             .iter()
             .map(|r| r["title"].as_str().unwrap())
             .collect();
-        // deluxe first (most seeders), standard edition last; no sequel, no Russian, no dead swarm
-        assert_eq!(titles.len(), 3);
-        assert!(titles[0].contains("Deluxe Edition"));
-        assert!(titles[1].contains("D E"));
-        assert!(titles[2].contains("(2020) Mp3"));
+        // the standard MP3 first even though Spotify's album is the deluxe one and
+        // the deluxe MP3 has more seeders; no FLAC, sequel, other language or dead swarm
+        assert_eq!(
+            titles,
+            [
+                "Moana (Original Motion Picture Soundtrack) (2020) Mp3 [PMEDIA]",
+                "Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) Mp3 320",
+            ]
+        );
     }
 
     #[test]
-    fn plain_albums_prefer_mp3() {
+    fn lossless_is_never_offered() {
         let results = vec![
             json!({"title": "Lin Manuel Miranda Encanto (Original Motion Picture Soundtrack) (2021) FLAC", "seeders": 18}),
-            json!({"title": "Lin Manuel Miranda Encanto (Original Motion Picture Soundtrack) (2021) Mp3 320kbps", "seeders": 8}),
+            json!({"title": "Encanto (Original Motion Picture Soundtrack) [24-96 FLAC]", "seeders": 9}),
         ];
-        let ranked = rank_releases("Encanto (Original Motion Picture Soundtrack)", &results);
-        assert!(ranked[0]["title"].as_str().unwrap().contains("Mp3"));
+        assert!(rank_releases("Encanto (Original Motion Picture Soundtrack)", &results).is_empty());
     }
 }

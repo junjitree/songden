@@ -16,6 +16,8 @@ pub struct Config {
     pub prowlarr_key: String,
     /// Where Lidarr puts music (the root folder for artists it adds).
     pub music_root: String,
+    /// Lidarr quality profile, by name, for artists songden adds.
+    pub quality_profile: String,
     /// Argon2 PHC string of the shared family password (`songden hash-password`).
     pub password_hash: String,
     /// Unix seconds; sessions started before it are refused. Raise it to sign
@@ -81,6 +83,7 @@ impl Config {
             prowlarr_url: optional("PROWLARR_URL", "http://prowlarr:9696"),
             prowlarr_key: required("PROWLARR_KEY")?,
             music_root: optional("MUSIC_ROOT", "/data/media/music"),
+            quality_profile: optional("LIDARR_QUALITY_PROFILE", "Standard"),
             password_hash: required("FAMILY_PASSWORD_HASH")?,
             sessions_since: optional("SESSIONS_SINCE", "0").parse().unwrap_or(0),
             secure_cookies: optional("SECURE_COOKIES", "true") != "false",

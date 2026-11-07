@@ -20,7 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matched to songs in Jellyfin by title, credit tails ignored and versions
   (reprise, instrumental) kept apart.
 - Automatic downloads of missing songs through Lidarr, with a Prowlarr fallback
-  for albums Lidarr's own search cannot find.
+  for albums Lidarr's own search cannot find. Downloads are MP3, standard
+  edition first: the fallback never offers lossless releases, and artists
+  songden adds get the `LIDARR_QUALITY_PROFILE` profile (default "Standard").
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and

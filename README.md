@@ -36,8 +36,8 @@ a long hold instead, and leads back on its own.
   up and handed to Lidarr. When Lidarr's own search finds nothing (soundtracks
   often: their catalogue names never match how releases are named), songden
   searches your indexers through Prowlarr by Spotify's album name and offers the
-  best few releases to Lidarr, which still checks a release is that album before
-  importing it.
+  best few MP3 releases (standard editions first; never lossless) to Lidarr,
+  which still checks a release is that album before importing it.
 - **One family password.** A device signs in once and stays signed in for a
   year, renewed whenever it is used.
 - **Offline play.** Songs are saved on the device after their first play.
