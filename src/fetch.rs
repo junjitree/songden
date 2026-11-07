@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 use crate::{
     Error, Result,
-    spotify::{Spotify, Track},
+    spotify::{Spotify, Track, TrackPage},
     store::JsonStore,
     text::norm,
 };
@@ -35,6 +35,7 @@ const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
 const SEARCH_RESULTS: u32 = 6;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(120);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+const TAG_TIMEOUT: Duration = Duration::from_secs(60);
 /// How far a result's length may be from Spotify's: this many seconds, or this
 /// share of the song if that is more.
 const LENGTH_SLACK_S: u64 = 3;
@@ -384,6 +385,25 @@ impl Worker {
             while let Ok(more) = rx.try_recv() {
                 batch.extend(more);
             }
+            let untagged: Vec<Track> = {
+                let mut seen = BTreeSet::new();
+                batch
+                    .iter()
+                    .filter(|t| t.id().is_some_and(|id| seen.insert(id.to_string())))
+                    .filter(|t| {
+                        t.id().is_some_and(|id| {
+                            self.library.audio(id).is_some() && !self.is_tagged(id)
+                        })
+                    })
+                    .cloned()
+                    .collect()
+            };
+            for track in untagged {
+                let id = track.id().unwrap_or_default().to_string();
+                if let Err(err) = self.describe(&track, &id).await {
+                    warn!("fetch: could not tag {:?}: {err}", track.title);
+                }
+            }
             let todo: Vec<Track> = {
                 let failures = self
                     .failures
@@ -476,15 +496,126 @@ impl Worker {
         let source = serde_json::json!({
             "url": c.url, "title": c.title, "artists": c.artists, "seconds": c.seconds,
             "spotify": { "title": track.title, "artists": track.artists, "seconds": track.seconds },
+            "tagged": false,
         });
-        std::fs::write(
-            self.library.dir.join(format!("{id}.source.json")),
-            serde_json::to_vec_pretty(&source)?,
-        )?;
-        match self.spotify.track_cover(track).await {
-            Ok(bytes) => std::fs::write(self.library.dir.join(format!("{id}.jpg")), bytes)?,
-            Err(err) => warn!("fetch: no cover for {:?}: {err}", track.title),
+        self.write_source(id, &source)?;
+        self.describe(track, id).await
+    }
+
+    fn source_path(&self, id: &str) -> PathBuf {
+        self.library.dir.join(format!("{id}.source.json"))
+    }
+
+    fn write_source(&self, id: &str, source: &Value) -> Result<()> {
+        std::fs::write(self.source_path(id), serde_json::to_vec_pretty(source)?)?;
+        Ok(())
+    }
+
+    /// Whether the song's file has had its tags written (per its source record).
+    fn is_tagged(&self, id: &str) -> bool {
+        std::fs::read(self.source_path(id))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .is_some_and(|v| v["tagged"].as_bool() == Some(true))
+    }
+
+    /// Fetches the cover and writes the tags, then marks the song tagged. Run
+    /// after a download, and for songs fetched before tagging existed.
+    async fn describe(&self, track: &Track, id: &str) -> Result<()> {
+        let page = self.spotify.track_page(track).await.unwrap_or_else(|err| {
+            warn!("fetch: no song page for {:?}: {err}", track.title);
+            Default::default()
+        });
+        let cover = self.library.dir.join(format!("{id}.jpg"));
+        if let Some(url) = &page.cover {
+            match self.spotify.image_bytes(url).await {
+                Ok(bytes) => std::fs::write(&cover, bytes)?,
+                Err(err) => warn!("fetch: no cover for {:?}: {err}", track.title),
+            }
         }
+        match self.tag(id, track, &page).await {
+            Ok(()) => {
+                let mut source = std::fs::read(self.source_path(id))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                source["tagged"] = serde_json::json!(true);
+                self.write_source(id, &source)?;
+            }
+            Err(err) => warn!("fetch: {:?} left untagged: {err}", track.title),
+        }
+        Ok(())
+    }
+
+    /// Writes the song's title, artists, album and year (and the cover, for an
+    /// .m4a) into the file, so other players and Jellyfin show it properly. The
+    /// audio is copied untouched into a new file that then replaces the old.
+    async fn tag(&self, id: &str, track: &Track, page: &TrackPage) -> Result<()> {
+        let Some(audio) = self.library.audio(id) else {
+            return Ok(());
+        };
+        let ext = audio
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("m4a")
+            .to_string();
+        let tagged = self.library.dir.join(format!(".tag-{id}.{ext}"));
+        let cover = self.library.cover(id).filter(|_| ext == "m4a");
+        let mut args: Vec<String> = vec![
+            "-nostdin".into(),
+            "-y".into(),
+            "-loglevel".into(),
+            "error".into(),
+        ];
+        args.extend(["-i".into(), audio.display().to_string()]);
+        if let Some(c) = &cover {
+            args.extend(["-i".into(), c.display().to_string()]);
+        }
+        args.extend(["-map".into(), "0:a".into()]);
+        if cover.is_some() {
+            args.extend([
+                "-map".into(),
+                "1:v".into(),
+                "-disposition:v:0".into(),
+                "attached_pic".into(),
+            ]);
+        }
+        args.extend(["-c".into(), "copy".into()]);
+        let tags = [
+            ("title", Some(track.title.as_str())),
+            ("artist", Some(track.artists.as_str())),
+            ("album_artist", Some(track.first_artist())),
+            ("album", page.album.as_deref()),
+            ("date", page.year.as_deref()),
+        ];
+        for (key, value) in tags {
+            if let Some(value) = value {
+                args.extend(["-metadata".into(), format!("{key}={value}")]);
+            }
+        }
+        args.push(tagged.display().to_string());
+        let run = Command::new("ffmpeg")
+            .args(&args)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        let out = tokio::time::timeout(TAG_TIMEOUT, run)
+            .await
+            .map_err(|_| Error::Upstream("ffmpeg timed out".into()))?
+            .map_err(|e| Error::Internal(format!("could not run ffmpeg: {e}")))?;
+        if !out.status.success() {
+            if let Err(e) = std::fs::remove_file(&tagged)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!("fetch: could not remove {}: {e}", tagged.display());
+            }
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(Error::Upstream(format!(
+                "ffmpeg: {}",
+                err.lines().last().unwrap_or("")
+            )));
+        }
+        std::fs::rename(&tagged, &audio)?;
         Ok(())
     }
 

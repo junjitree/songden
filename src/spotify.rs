@@ -28,6 +28,9 @@ static NEXT_DATA: LazyLock<Regex> = LazyLock::new(|| {
 static OG_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<meta property="og:image" content="([^"]*)""#).expect("valid regex")
 });
+static OG_DESCRIPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<meta property="og:description" content="([^"]*)""#).expect("valid regex")
+});
 static PLAYLIST_LINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"open\.spotify\.com/(?:intl-[a-z]+/)?(?:embed/)?playlist/([A-Za-z0-9]{22})")
         .expect("valid regex")
@@ -132,6 +135,32 @@ pub fn parse_track_image(html: &str) -> Option<String> {
         .filter(|url| cover_url_ok(url))
 }
 
+/// What a song's own page says about it: the cover, and the album and year from
+/// its description ("Artists · Album · Song · Year").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrackPage {
+    pub cover: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<String>,
+}
+
+pub fn parse_track_page(html: &str) -> TrackPage {
+    let description = OG_DESCRIPTION
+        .captures(html)
+        .map(|c| unescape_html(&c[1]))
+        .unwrap_or_default();
+    let parts: Vec<&str> = description.split(" · ").map(str::trim).collect();
+    let year = parts
+        .last()
+        .filter(|y| y.len() == 4 && y.chars().all(|c| c.is_ascii_digit()))
+        .map(|y| y.to_string());
+    TrackPage {
+        cover: parse_track_image(html),
+        album: (parts.len() >= 3).then(|| parts[1].to_string()),
+        year,
+    }
+}
+
 #[derive(Clone)]
 pub struct Spotify {
     client: reqwest::Client,
@@ -165,17 +194,20 @@ impl Spotify {
         )
     }
 
-    /// A song's cover art (bytes), from its own page.
-    pub async fn track_cover(&self, track: &Track) -> Result<Vec<u8>> {
+    /// What a song's own page says (cover, album, year).
+    pub async fn track_page(&self, track: &Track) -> Result<TrackPage> {
         let id = track
             .id()
             .ok_or_else(|| Error::Internal(format!("bad track uri {:?}", track.uri)))?;
-        let page = self
-            .page(&format!("https://open.spotify.com/track/{id}"))
-            .await?;
-        let url = parse_track_image(&page)
-            .ok_or_else(|| Error::Upstream(format!("no cover on the page of {id}")))?;
-        Ok(self.image(&url).await?.bytes().await?.to_vec())
+        Ok(parse_track_page(
+            &self
+                .page(&format!("https://open.spotify.com/track/{id}"))
+                .await?,
+        ))
+    }
+
+    pub async fn image_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        Ok(self.image(url).await?.bytes().await?.to_vec())
     }
 
     /// A playlist cover image, only from Spotify's own hosts.
@@ -220,6 +252,19 @@ mod tests {
     #[test]
     fn a_page_without_data_is_an_error() {
         assert!(parse_embed("<html>gone</html>").is_err());
+    }
+
+    #[test]
+    fn reads_a_song_pages_album_and_year() {
+        let html = r#"<meta property="og:image" content="https://i.scdn.co/image/abc"/><meta property="og:description" content="Auli&#x27;i Cravalho, Disney · Moana (Original Motion Picture Soundtrack/Deluxe Edition) · Song · 2016"/>"#;
+        let page = parse_track_page(html);
+        assert_eq!(
+            page.album.as_deref(),
+            Some("Moana (Original Motion Picture Soundtrack/Deluxe Edition)")
+        );
+        assert_eq!(page.year.as_deref(), Some("2016"));
+        assert_eq!(page.cover.as_deref(), Some("https://i.scdn.co/image/abc"));
+        assert_eq!(parse_track_page("<html></html>"), TrackPage::default());
     }
 
     #[test]

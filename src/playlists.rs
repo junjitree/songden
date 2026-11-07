@@ -155,8 +155,8 @@ impl Playlists {
         Some(self.resolve(id, &raw))
     }
 
-    /// Reads the playlist from Spotify, keeps it, and hands songs not on disk to
-    /// the fetcher.
+    /// Reads the playlist from Spotify, keeps it, and hands its songs to the
+    /// fetcher, which fetches those not on disk and tags any not tagged yet.
     async fn read_spotify(&self, id: &str) -> Result<()> {
         info!("playlist {id}: reading Spotify");
         let raw = self.spotify.playlist(id).await?;
@@ -177,9 +177,15 @@ impl Playlists {
             kept.data.insert(id.to_string(), raw);
             kept.save()?;
         }
-        if !missing.is_empty() {
-            self.fetcher.kick(missing);
-        }
+        let all = self
+            .from_spotify
+            .lock()
+            .map_err(poisoned)?
+            .data
+            .get(id)
+            .map(|p| p.tracks.clone())
+            .unwrap_or_default();
+        self.fetcher.kick(all);
         Ok(())
     }
 
