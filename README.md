@@ -97,4 +97,4 @@ cargo test
 
 ## Licence
 
-See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

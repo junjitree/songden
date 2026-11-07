@@ -2,6 +2,7 @@
 name = "songden"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 description = "A self-hosted, kid-safe music player inspired by Yoto and Toniebox"
 repository = "https://github.com/junjitree/songden"
 readme = "README.md"
