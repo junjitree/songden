@@ -44,6 +44,11 @@ What is not done, and why. Delete an entry when it ships.
   `/api/parents/status` output; cosmetic, and it clears when the retry ends. The
   fix is to skip failures whose id is queued.
 
+- **At 320px wide the player bar's next button runs off the screen** in normal
+  controls (its right edge measured 337px; the same before and after the title
+  line). Measured at 320, 360 and 390 wide, and only 320 overflows. Hiding the
+  bar's album art at that width would make room.
+
 ## Considered and declined
 
 - **Torrents through Lidarr and Prowlarr** (the first design): albums rather
