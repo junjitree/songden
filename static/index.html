@@ -168,7 +168,14 @@
     align-items: center; gap: 12px; padding: 0 16px; background: var(--bg);
     box-shadow: 0 -6px 18px rgba(74, 36, 8, 0.18); z-index: 2;
   }
-  body.has-track[data-view="home"] .bar { display: flex; }
+  body.has-track[data-view="home"] .bar { display: flex; touch-action: none; }
+  /* swiping the bar up: the now-playing screen rises over the tiles with the finger */
+  body.peeking #player {
+    display: block; z-index: 4; transform: translateY(var(--peek, 100%));
+    background: inherit; /* the page's own paper, paw prints and all, so it hides the tiles */
+    border-radius: 24px 24px 0 0; box-shadow: 0 -10px 30px rgba(74, 36, 8, 0.25);
+  }
+  body.peeking.settling #player { transition: transform 0.25s ease-out; }
   .now { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; text-align: left; }
   .now .art { width: 64px; height: 64px; flex: none; border-radius: 14px; border: 3px solid var(--button); background: var(--button) center / cover no-repeat; }
   .now .text { min-width: 0; }
@@ -420,10 +427,71 @@ async function openPlaylist(id) {
 }
 
 $("back").addEventListener("click", goHome);
-// Anywhere on the player bar except its buttons brings back the full screen.
-$("bar").addEventListener("click", (e) => {
-  if (queue && !e.target.closest(".controls")) show("player");
-});
+// Anywhere on the player bar except its buttons brings back the full screen:
+// a tap, or a swipe up that the screen follows. There is no swipe down; Back
+// closes it.
+{
+  // a swipe past this share of the screen, or this fast, opens it on release
+  const OPEN_SHARE = 0.25;
+  const OPEN_SPEED = 0.5; // px per ms
+  // movement below this is a tap, not a swipe
+  const SLOP = 8;
+  const bar = $("bar");
+  const player = $("player");
+  let start = null;   // {y, t} of the press
+  let lastY = 0;      // the finger's latest position (a cancel reports none)
+  let swiped = false;
+
+  const height = () => player.getBoundingClientRect().height || window.innerHeight;
+  const setPeek = (px) => player.style.setProperty("--peek", `${Math.max(px, 0)}px`);
+  const settle = (open) => {
+    document.body.classList.add("settling");
+    setPeek(open ? 0 : height());
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      document.body.classList.remove("peeking", "settling");
+      player.style.removeProperty("--peek");
+      if (open) show("player");
+    };
+    player.addEventListener("transitionend", done, { once: true });
+    setTimeout(done, 400); // in case no transition runs
+  };
+
+  bar.addEventListener("pointerdown", (e) => {
+    if (!queue || e.target.closest(".controls")) return;
+    start = { y: e.clientY, t: performance.now() };
+    lastY = e.clientY;
+    swiped = false;
+    try { bar.setPointerCapture(e.pointerId); } catch { /* the swipe still works while over the bar */ }
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    lastY = e.clientY;
+    const up = start.y - lastY;
+    if (!swiped && up < SLOP) return;
+    if (!swiped) {
+      swiped = true;
+      render();
+      document.body.classList.add("peeking");
+    }
+    setPeek(height() - up);
+  });
+  const release = () => {
+    if (!start) return;
+    const up = start.y - lastY;
+    const speed = up / Math.max(performance.now() - start.t, 1);
+    start = null;
+    if (swiped) settle(up > height() * OPEN_SHARE || speed > OPEN_SPEED);
+  };
+  bar.addEventListener("pointerup", release);
+  bar.addEventListener("pointercancel", release);
+  bar.addEventListener("click", (e) => {
+    if (swiped) { swiped = false; return; } // the swipe already decided
+    if (queue && !e.target.closest(".controls")) show("player");
+  });
+}
 
 // ---- sign-in ---------------------------------------------------------------
 

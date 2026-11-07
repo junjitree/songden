@@ -16,6 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   elapsed/total times. The controls never move: the title always takes two lines
   (longer ones end in an ellipsis), the artist one, the times a fixed width.
   Anywhere on the player bar except its buttons opens the full screen.
+- Swiping the player bar up opens the now-playing screen, which follows the
+  finger and opens past a quarter of the way or on a flick; Back closes it.
 - The screen stays on while music plays (Screen Wake Lock) and may sleep again
   when paused.
 - A "Check for new songs" button on the grown-ups' page: re-reads every playlist
