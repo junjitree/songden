@@ -132,6 +132,10 @@ pub fn pick_catalogue<'a>(info: &TrackAlbum, candidates: &'a [Value]) -> Option<
 /// Lossless releases are never offered: they are many times the size, slower to
 /// fetch, and what a phone caches anyway is the MP3. A release that names no
 /// format is still offered, after the labelled ones; Lidarr checks the files.
+fn first_artist(info: &TrackAlbum) -> &str {
+    info.artists.split(',').next().unwrap_or_default().trim()
+}
+
 /// What the fallback searches the indexers for, in order: the album's full
 /// name, then just the words that identify it, with "soundtrack" for a
 /// soundtrack or else the first artist.
@@ -171,7 +175,17 @@ fn says_mp3(title: &str) -> bool {
     MP3.is_match(title)
 }
 
-pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
+pub fn rank_releases<'a>(
+    album: &str,
+    artist: &str,
+    year: Option<&str>,
+    results: &'a [Value],
+) -> Vec<&'a Value> {
+    let year: Option<i32> = year.and_then(|y| y.parse().ok());
+    // A self-titled album ("The Lumineers" by The Lumineers) shares every word
+    // with the artist's other albums, so only its year tells them apart.
+    let artist_words: BTreeSet<String> = words(artist).into_iter().collect();
+    let self_titled = !core(album).is_empty() && core(album).is_subset(&artist_words);
     let album_words: BTreeSet<String> = words(album).into_iter().collect();
     let want = core(album);
     let mut picks: Vec<(bool, bool, u64, &Value)> = results
@@ -182,6 +196,21 @@ pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
             let title_words: BTreeSet<String> = words(title).into_iter().collect();
             if seeders < 1 || !want.is_subset(&title_words) || is_lossless(title) {
                 return None;
+            }
+            // For a self-titled album the release must name its year: "The
+            // Lumineers - Automatic (2025)" is not their 2012 "The Lumineers".
+            // Only then: other releases often carry the year they were uploaded
+            // ("Moana (2020)" for the 2016 album), so the year can't be a rule.
+            if self_titled {
+                let names_the_year = year.is_some_and(|year| {
+                    title_words
+                        .iter()
+                        .filter_map(|w| w.parse::<i32>().ok())
+                        .any(|y| (y - year).abs() <= 1)
+                });
+                if !names_the_year {
+                    return None;
+                }
             }
             // "Moana 2" is not "Moana": a number right after one of the album's own
             // words, which the album name doesn't have. Other numbers ("24-96 FLAC",
@@ -564,6 +593,7 @@ impl Worker {
                     )
                     .await?;
             }
+            self.monitor_artist(&album).await?;
             return Ok(Some(album));
         }
         let artist_id = cand["artist"]["foreignArtistId"]
@@ -593,7 +623,9 @@ impl Worker {
         body["monitored"] = json!(true);
         body["artist"] = artist;
         body["addOptions"] = json!({ "searchForNewAlbum": false });
-        Ok(Some(self.lidarr.post("/album", body).await?))
+        let album = self.lidarr.post("/album", body).await?;
+        self.monitor_artist(&album).await?;
+        Ok(Some(album))
     }
 
     /// The id of the configured quality profile; an error naming the ones that
@@ -611,6 +643,30 @@ impl Worker {
                     self.quality_profile
                 ))
             })
+    }
+
+    /// Makes sure the album's artist is monitored. Lidarr refuses every release
+    /// for an unmonitored artist ("Artist is not monitored"), and adding one with
+    /// "monitor no albums" leaves it unmonitored. Its other albums stay
+    /// unmonitored: `monitorNewItems` is none, and only albums asked for are
+    /// monitored, so this downloads nothing else.
+    async fn monitor_artist(&self, album: &Value) -> Result<()> {
+        let Some(artist_id) = album["artistId"].as_i64() else {
+            return Ok(());
+        };
+        let mut artist = self
+            .lidarr
+            .get(&format!("/artist/{artist_id}"), &[])
+            .await?;
+        if artist["monitored"].as_bool() != Some(true) {
+            artist["monitored"] = json!(true);
+            artist["monitorNewItems"] = json!("none");
+            self.lidarr
+                .put(&format!("/artist/{artist_id}"), artist)
+                .await?;
+            info!("ingest: now monitoring artist {artist_id} (no other albums)");
+        }
+        Ok(())
     }
 
     /// Lidarr's own search; true if it grabbed a release.
@@ -669,7 +725,14 @@ impl Worker {
                     continue;
                 }
             }
-            if !rank_releases(&info.album, &results).is_empty() {
+            if !rank_releases(
+                &info.album,
+                first_artist(info),
+                info.year.as_deref(),
+                &results,
+            )
+            .is_empty()
+            {
                 break;
             }
             info!("ingest: nothing usable for {query:?}");
@@ -691,9 +754,14 @@ impl Worker {
             .and_then(|d| d.get(..4))
             .or(info.year.as_deref())
             .unwrap_or("");
-        for r in rank_releases(&info.album, &results)
-            .into_iter()
-            .take(FALLBACK_TRIES)
+        for r in rank_releases(
+            &info.album,
+            first_artist(info),
+            info.year.as_deref(),
+            &results,
+        )
+        .into_iter()
+        .take(FALLBACK_TRIES)
         {
             let raw_title = r["title"].as_str().unwrap_or_default();
             let clean = clean_title(&artist, title, year);
@@ -763,6 +831,8 @@ mod tests {
         ];
         let ranked = rank_releases(
             "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+            "Auli'i Cravalho",
+            Some("2016"),
             &results,
         );
         let titles: Vec<&str> = ranked
@@ -824,7 +894,7 @@ mod tests {
             json!({"title": "Brother Bear - Soundtrack 320cbr (Big Papi)", "seeders": 1}),
             json!({"title": "Brother Bear Soundtrack [24-96 Hi-Res]", "seeders": 9}),
         ];
-        let ranked = rank_releases("Brother Bear", &results);
+        let ranked = rank_releases("Brother Bear", "Phil Collins", None, &results);
         let titles: Vec<&str> = ranked
             .iter()
             .map(|r| r["title"].as_str().unwrap())
@@ -866,11 +936,34 @@ mod tests {
     }
 
     #[test]
+    fn a_self_titled_album_is_not_the_artists_other_albums() {
+        let results = vec![
+            json!({"title": "The Lumineers - Automatic (2025) Mp3 320kbps [PMEDIA]", "seeders": 36}),
+            json!({"title": "The Lumineers  BRIGHTSIDE (2022) Mp3 320kbps [PMEDIA]", "seeders": 15}),
+            json!({"title": "The Lumineers - The Lumineers (2012) MP3 320", "seeders": 3}),
+        ];
+        let ranked = rank_releases("The Lumineers", "The Lumineers", Some("2012"), &results);
+        let titles: Vec<&str> = ranked
+            .iter()
+            .map(|r| r["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles, ["The Lumineers - The Lumineers (2012) MP3 320"]);
+    }
+
+    #[test]
     fn lossless_is_never_offered() {
         let results = vec![
             json!({"title": "Lin Manuel Miranda Encanto (Original Motion Picture Soundtrack) (2021) FLAC", "seeders": 18}),
             json!({"title": "Encanto (Original Motion Picture Soundtrack) [24-96 FLAC]", "seeders": 9}),
         ];
-        assert!(rank_releases("Encanto (Original Motion Picture Soundtrack)", &results).is_empty());
+        assert!(
+            rank_releases(
+                "Encanto (Original Motion Picture Soundtrack)",
+                "Lin-Manuel Miranda",
+                None,
+                &results
+            )
+            .is_empty()
+        );
     }
 }

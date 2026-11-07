@@ -44,6 +44,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preferring ones labelled MP3/320/V0.
 - Song titles with contractions ("How Far I'll Go") are found in the library;
   the search word used to be "ill".
+- Artists songden adds to Lidarr are monitored (none of their other albums are),
+  so Lidarr accepts their releases; it refused every one with "Artist is not
+  monitored". For a self-titled album the release must name the album's year, so
+  the artist's other albums are not offered in its place.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
