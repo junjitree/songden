@@ -545,11 +545,21 @@ function render() {
   }
 }
 
+// The pending "jump to the saved position" for the song being loaded; dropped
+// when another song is loaded first, so it can never land on the wrong song
+// (a jump past that song's end would finish it and skip on).
+let pendingSeek = null;
+
 function load(i, startAt = 0) {
   if (!queue || !queue.tracks.length) return;
   index = (i + queue.tracks.length) % queue.tracks.length;
+  if (pendingSeek) audio.removeEventListener("loadedmetadata", pendingSeek);
+  pendingSeek = null;
   audio.src = `/api/audio/${queue.tracks[index].id}`;
-  if (startAt) audio.addEventListener("loadedmetadata", () => { audio.currentTime = startAt; }, { once: true });
+  if (startAt) {
+    pendingSeek = () => { pendingSeek = null; audio.currentTime = startAt; };
+    audio.addEventListener("loadedmetadata", pendingSeek, { once: true });
+  }
   savePosition(startAt);
   render();
 }
@@ -613,6 +623,12 @@ audio.addEventListener("ended", next);
 audio.addEventListener("playing", () => { failures = 0; render(); });
 audio.addEventListener("error", () => {
   if (!queue) return;
+  // Changing song cancels the load in progress, and Safari can report that as
+  // an error: only a real failure of the song meant to be playing counts.
+  const err = audio.error;
+  if (!err || err.code === MediaError.MEDIA_ERR_ABORTED) return;
+  const meant = queue.tracks[index] && `/api/audio/${queue.tracks[index].id}`;
+  if (meant && !audio.currentSrc.endsWith(meant)) return;
   failures += 1;
   if (failures < queue.tracks.length) { next(); return; }
   audio.pause();

@@ -50,6 +50,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A search where one result fails to load (an unavailable video) keeps the
   results that did load; it used to drop them all and report the song as not
   found, which lost most of Moana's score.
+- Pressing next while a song is still loading no longer races through the
+  playlist: a cancelled load isn't taken for a failed song, and a saved position
+  meant for one song can no longer be applied to the next.
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
