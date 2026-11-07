@@ -61,6 +61,38 @@ const VERSIONS: &[&str] = &[
     "reprise",
     "mashup",
     "parody",
+    // another language's version, unless the Spotify title names it too
+    "tagalog",
+    "filipino",
+    "spanish",
+    "latino",
+    "castellano",
+    "french",
+    "italian",
+    "german",
+    "portuguese",
+    "brazilian",
+    "japanese",
+    "korean",
+    "mandarin",
+    "cantonese",
+    "chinese",
+    "thai",
+    "vietnamese",
+    "indonesian",
+    "malay",
+    "russian",
+    "polish",
+    "dutch",
+    "hindi",
+];
+/// Artist names that every dub carries too, so they don't identify the singer.
+const GENERIC_ARTISTS: &[&str] = &[
+    "disney",
+    "various artists",
+    "cast",
+    "soundtrack",
+    "original cast",
 ];
 /// Words that say nothing about which song a title is.
 const FLUFF: &[&str] = &[
@@ -99,6 +131,8 @@ pub struct Candidate {
     pub url: String,
     pub title: String,
     pub seconds: Option<u64>,
+    /// Who it's by: YouTube Music's artists, or the channel ("X - Topic" as X).
+    pub artists: Vec<String>,
 }
 
 impl Candidate {
@@ -107,10 +141,27 @@ impl Candidate {
             .as_str()
             .or_else(|| v["url"].as_str())
             .map(String::from)?;
+        let mut artists: Vec<String> = match v["artists"].as_array() {
+            Some(list) => list
+                .iter()
+                .filter_map(|a| a.as_str())
+                .map(String::from)
+                .collect(),
+            None => v["artist"]
+                .as_str()
+                .map(|a| a.split(", ").map(String::from).collect())
+                .unwrap_or_default(),
+        };
+        for key in ["channel", "uploader"] {
+            if let Some(name) = v[key].as_str() {
+                artists.push(name.trim_end_matches(" - Topic").to_string());
+            }
+        }
         Some(Self {
             url,
             title: v["title"].as_str()?.to_string(),
             seconds: v["duration"].as_f64().map(|d| d.round() as u64),
+            artists,
         })
     }
 }
@@ -139,7 +190,13 @@ fn telling(words: &BTreeSet<String>) -> BTreeSet<String> {
 ///   agree exactly.
 /// - it isn't a version (live, cover, karaoke, sped up…) the title didn't ask for.
 /// - most of the words that tell titles apart agree.
+/// - it is by one of Spotify's artists (`same_singer`): a dub is timed to the
+///   same scene, so it runs the same length and sometimes keeps the title, but
+///   it is sung by someone else.
 pub fn is_the_song(track: &Track, c: &Candidate) -> bool {
+    if !same_singer(track, c) {
+        return false;
+    }
     let want = words(&track.title);
     let have = words(&c.title);
     if VERSIONS
@@ -159,6 +216,32 @@ pub fn is_the_song(track: &Track, c: &Candidate) -> bool {
             titles_agree && want_s.abs_diff(have_s) <= slack
         }
     }
+}
+
+/// Whether one of Spotify's artists (other than a label like "Disney") is among
+/// the result's artists or names its channel. Names are compared folded, and one
+/// may contain the other ("Carolina Gaitán - La Gaita" and "Carolina Gaitán").
+pub fn same_singer(track: &Track, c: &Candidate) -> bool {
+    let theirs: Vec<String> = c
+        .artists
+        .iter()
+        .map(|a| norm(a))
+        .filter(|a| !a.is_empty())
+        .collect();
+    let ours: Vec<String> = track
+        .artists
+        .split(',')
+        .map(norm)
+        .filter(|a| a.len() >= 3 && !GENERIC_ARTISTS.contains(&a.as_str()))
+        .collect();
+    if ours.is_empty() {
+        return true; // nothing to tell singers apart by
+    }
+    ours.iter().any(|o| {
+        theirs
+            .iter()
+            .any(|t| t == o || t.contains(o.as_str()) || o.contains(t.as_str()) && t.len() >= 3)
+    })
 }
 
 /// The first result that is the song, in the search's own order.
@@ -389,6 +472,15 @@ impl Worker {
             track.title, c.title, c.seconds
         );
         self.download(id, &c.url).await?;
+        // what was used for this song, so a wrong-sounding one can be traced
+        let source = serde_json::json!({
+            "url": c.url, "title": c.title, "artists": c.artists, "seconds": c.seconds,
+            "spotify": { "title": track.title, "artists": track.artists, "seconds": track.seconds },
+        });
+        std::fs::write(
+            self.library.dir.join(format!("{id}.source.json")),
+            serde_json::to_vec_pretty(&source)?,
+        )?;
         match self.spotify.track_cover(track).await {
             Ok(bytes) => std::fs::write(self.library.dir.join(format!("{id}.jpg")), bytes)?,
             Err(err) => warn!("fetch: no cover for {:?}: {err}", track.title),
@@ -486,22 +578,83 @@ impl Worker {
 mod tests {
     use super::*;
 
+    /// A Spotify song; every one also lists "Test Singer", whom `found` results
+    /// are by, so tests about titles and lengths aren't about singers.
     fn track(title: &str, artists: &str, seconds: u64) -> Track {
         Track {
             uri: "spotify:track:626IyVO7cgaCTFbjDE3KPB".into(),
             title: title.into(),
-            artists: artists.into(),
+            artists: format!("{artists}, Test Singer"),
             explicit: false,
             seconds,
         }
     }
 
     fn found(title: &str, seconds: Option<u64>) -> Candidate {
+        by(title, seconds, &[])
+    }
+
+    /// A result by these artists; with none, by whoever the track's first artist is.
+    fn by(title: &str, seconds: Option<u64>, artists: &[&str]) -> Candidate {
         Candidate {
             url: format!("https://youtube.com/watch?v={}", title.len()),
             title: title.into(),
             seconds,
+            artists: if artists.is_empty() {
+                vec!["Test Singer - Topic".trim_end_matches(" - Topic").into()]
+            } else {
+                artists.iter().map(|a| a.to_string()).collect()
+            },
         }
+    }
+
+    #[test]
+    fn a_dub_with_the_same_title_and_length_is_not_the_song() {
+        let song = Track {
+            uri: "spotify:track:626IyVO7cgaCTFbjDE3KPB".into(),
+            title: "Where You Are".into(),
+            artists: "Christopher Jackson, Rachel House, Disney".into(),
+            explicit: false,
+            seconds: 210,
+        };
+        // a dub sung by others, carrying the same title and the "Disney" label
+        assert!(!is_the_song(
+            &song,
+            &by("Where You Are", Some(210), &["Luca Velletri", "Disney"])
+        ));
+        assert!(is_the_song(
+            &song,
+            &by(
+                "Where You Are",
+                Some(210),
+                &["Christopher Jackson", "Rachel House"]
+            )
+        ));
+        // the channel counts when YouTube Music gives no artists
+        assert!(is_the_song(
+            &song,
+            &by("Where You Are", Some(211), &["Christopher Jackson"])
+        ));
+        // no way to tell who sings it: not taken
+        let unknown = Candidate {
+            artists: vec![],
+            ..by("Where You Are", Some(210), &["x"])
+        };
+        assert!(!is_the_song(&song, &unknown));
+    }
+
+    #[test]
+    fn another_languages_version_must_be_asked_for() {
+        let english = track("How Far I'll Go", "Auli'i Cravalho", 163);
+        assert!(!is_the_song(
+            &english,
+            &found("How Far I'll Go (Tagalog Version)", Some(163))
+        ));
+        let tagalog = track("How Far I'll Go - Tagalog Version", "Janella Salvador", 168);
+        assert!(is_the_song(
+            &tagalog,
+            &found("How Far I'll Go (Tagalog Version)", Some(168))
+        ));
     }
 
     #[test]
