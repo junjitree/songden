@@ -15,7 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Seeking on the now-playing screen: a thick track with a large handle and
   elapsed/total times. The controls never move: the title always takes two lines
   (longer ones end in an ellipsis), the artist one, the times a fixed width.
-  Anywhere on the player bar except its buttons opens the full screen.
+  Anywhere on the player bar except its buttons opens the full screen. On a
+  phone the bar shows the song on a line above its buttons, or beside the play
+  button in simple controls.
 - Swiping the player bar up opens the now-playing screen, which follows the
   finger and opens once released past the middle of the screen; Back closes it.
 - The screen stays on while music plays (Screen Wake Lock) and may sleep again
