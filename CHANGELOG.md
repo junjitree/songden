@@ -38,7 +38,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   songden adds get the `LIDARR_QUALITY_PROFILE` profile (default "Standard").
   Releases are offered under a name carrying a quality Lidarr recognises
   (MP3-320), and Prowlarr's magnet-redirect links go to Lidarr as download links
-  so the download client actually receives them.
+  so the download client actually receives them. The fallback searches a second
+  time by the album's identifying words alone ("frozen soundtrack") when the
+  full name finds nothing, and treats any non-lossless release as acceptable,
+  preferring ones labelled MP3/320/V0.
+- Song titles with contractions ("How Far I'll Go") are found in the library;
+  the search word used to be "ill".
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
