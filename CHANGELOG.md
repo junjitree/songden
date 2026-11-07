@@ -59,6 +59,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its title and album name (from its Spotify page, without any edition after a
   slash), before plain YouTube: covers and lullaby versions crowded out Moana's
   "Know Who You Are", which "Moana Original Motion Picture Soundtrack" finds.
+- A song no search finds is looked for on its album: the albums on YouTube Music
+  with the name Spotify gives are opened and their tracks checked the same way.
+  Bonus tracks like Moana's score demos are listed there even when song searches
+  do not bring them up.
+- A version the Spotify title asks for must be in the result's title too, so an
+  "Instrumental" can't be filled by the sung track of the same length.
 - Pressing next while a song is still loading no longer races through the
   playlist: a cancelled load isn't taken for a failed song, and a saved position
   meant for one song can no longer be applied to the next.

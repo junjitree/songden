@@ -46,7 +46,7 @@ const LENGTH_SLACK_S: u64 = 3;
 const LENGTH_SLACK_SHARE: f64 = 0.02;
 /// Audio extensions songs may be saved as, preferred first.
 pub const AUDIO_EXTS: &[&str] = &["m4a", "webm", "opus", "mp3"];
-/// Versions of a song a result may only be if the Spotify title asks for it.
+/// Versions of a song a result is if, and only if, the Spotify title asks for it.
 const VERSIONS: &[&str] = &[
     "live",
     "cover",
@@ -206,7 +206,7 @@ pub fn is_the_song(track: &Track, c: &Candidate) -> bool {
     let have = words(&c.title);
     if VERSIONS
         .iter()
-        .any(|v| have.contains(*v) && !want.contains(*v))
+        .any(|v| have.contains(*v) != want.contains(*v))
     {
         return false;
     }
@@ -571,6 +571,11 @@ impl Worker {
                 break;
             }
         }
+        if picked.is_none()
+            && let Some(album) = &page.album
+        {
+            picked = choose(track, &self.album_tracks(album).await?).cloned();
+        }
         let c = picked.ok_or_else(|| Error::Upstream("no matching song on YouTube".into()))?;
         info!(
             "fetch: {:?} <- {:?} ({:?}s)",
@@ -718,36 +723,60 @@ impl Worker {
         }
     }
 
+    /// What yt-dlp printed. One unavailable result makes it exit with an error
+    /// even with --ignore-errors, while the others are already printed: keep
+    /// those.
+    async fn listing(&self, args: &[&str]) -> Result<String> {
+        let run = run_ytdlp(&self.ytdlp, args, SEARCH_TIMEOUT).await?;
+        if let Some(err) = run.error {
+            if run.stdout.trim().is_empty() {
+                return Err(Error::Upstream(format!("yt-dlp: {err}")));
+            }
+            info!("fetch: listing partly failed: {err}");
+        }
+        Ok(run.stdout)
+    }
+
     /// Search results with their lengths (a full lookup per result, so the
     /// length is known).
     async fn search(&self, search: &str) -> Result<Vec<Candidate>> {
         let end = SEARCH_RESULTS.to_string();
-        let run = run_ytdlp(
-            &self.ytdlp,
-            &[
+        let found = self
+            .listing(&[
                 "--dump-json",
                 "--skip-download",
                 "--ignore-errors",
                 "--playlist-end",
                 &end,
                 search,
-            ],
-            SEARCH_TIMEOUT,
-        )
-        .await?;
-        // One unavailable result makes yt-dlp exit with an error even with
-        // --ignore-errors, while the others are already printed: keep those.
-        let found = parse_candidates(&run.stdout);
-        if let Some(err) = run.error {
-            if found.is_empty() {
-                return Err(Error::Upstream(format!("yt-dlp: {err}")));
-            }
-            info!(
-                "fetch: search {search:?} partly failed ({err}); using {} results",
-                found.len()
-            );
+            ])
+            .await?;
+        Ok(parse_candidates(&found))
+    }
+
+    /// Every track of the albums on YouTube Music named `album`. Bonus tracks
+    /// that song searches never bring up are still listed on their album.
+    async fn album_tracks(&self, album: &str) -> Result<Vec<Candidate>> {
+        let end = SEARCH_RESULTS.to_string();
+        let search = music_search(&plain_words(album), "albums")?;
+        let albums = self
+            .listing(&[
+                "--flat-playlist",
+                "--print",
+                "url",
+                "--playlist-end",
+                &end,
+                &search,
+            ])
+            .await?;
+        let mut tracks = Vec::new();
+        for url in albums.lines().filter(|l| l.starts_with("https://")) {
+            let listed = self
+                .listing(&["--flat-playlist", "--dump-json", url])
+                .await?;
+            tracks.extend(album_candidates(&listed, album));
         }
-        Ok(found)
+        Ok(tracks)
     }
 
     /// Downloads the audio to `.part-<id>.<ext>`, then renames it into place so a
@@ -783,32 +812,53 @@ impl Worker {
     }
 }
 
+/// A search of one tab of YouTube Music ("songs", "albums").
+fn music_search(query: &str, tab: &str) -> Result<String> {
+    reqwest::Url::parse_with_params("https://music.youtube.com/search", &[("q", query)])
+        .map(|mut u| {
+            u.set_fragment(Some(tab));
+            u.to_string()
+        })
+        .map_err(|e| Error::Internal(e.to_string()))
+}
+
+/// An album's name as search words, without its punctuation.
+fn plain_words(album: &str) -> String {
+    album
+        .replace(['(', ')', '[', ']', '/'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The tracks in yt-dlp's `--flat-playlist --dump-json` lines of an album, if
+/// the album has this name: a dub's album lists the same bonus tracks under its
+/// own name.
+fn album_candidates(stdout: &str, album: &str) -> Vec<Candidate> {
+    stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| {
+            v["playlist_title"].as_str().is_some_and(|name| {
+                norm(name.strip_prefix("Album - ").unwrap_or(name)) == norm(album)
+            })
+        })
+        .filter_map(|v| Candidate::from_json(&v))
+        .collect()
+}
+
 /// The searches tried for a song, in order, until one finds it: YouTube Music
 /// songs by title and singer, then by title and album (a film song's singers
 /// can be crowded out by covers, while its soundtrack's name finds the real
 /// one), then plain YouTube by title and singer.
 fn searches(track: &Track, album: Option<&str>) -> Result<Vec<String>> {
-    let music = |query: &str| {
-        reqwest::Url::parse_with_params("https://music.youtube.com/search", &[("q", query)])
-            .map(|mut u| {
-                u.set_fragment(Some("songs"));
-                u.to_string()
-            })
-            .map_err(|e| Error::Internal(e.to_string()))
-    };
     let by_singer = format!("{} {}", track.title, track.first_artist());
-    let mut out = vec![music(&by_singer)?];
+    let mut out = vec![music_search(&by_singer, "songs")?];
     // "Moana (Original Motion Picture Soundtrack/Deluxe Edition)": the words find
     // the song, while an edition after the slash loses it again
-    let album = album.map(|a| {
-        let name = a.split('/').next().unwrap_or(a);
-        name.replace(['(', ')', '[', ']'], " ")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
+    let album = album.map(|a| plain_words(a.split('/').next().unwrap_or(a)));
     if let Some(album) = album.filter(|a| !a.is_empty() && norm(a) != norm(&track.title)) {
-        out.push(music(&format!("{} {album}", track.title))?);
+        out.push(music_search(&format!("{} {album}", track.title), "songs")?);
     }
     out.push(format!("ytsearch{SEARCH_RESULTS}:{by_singer}"));
     Ok(out)
@@ -1029,6 +1079,57 @@ mod tests {
             &karaoke,
             &found("How Far I'll Go (Instrumental)", Some(164))
         ));
+    }
+
+    #[test]
+    fn a_version_asked_for_must_be_there() {
+        // a long title's words still mostly agree without the version's word
+        let song = track("How Far I'll Go - Instrumental", "Moana Karaoke", 163);
+        assert!(!is_the_song(&song, &found("How Far I'll Go", Some(163))));
+        assert!(is_the_song(
+            &song,
+            &found("How Far I'll Go (Instrumental)", Some(163))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_bonus_track_is_found_on_its_album_only() {
+        let dir = std::env::temp_dir().join(format!("songden-albums-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("yt-dlp");
+        // the search names two albums; the dub's comes first and has the same track
+        std::fs::write(
+            &fake,
+            r#"#!/bin/sh
+case "$*" in
+*--print*) echo https://music.youtube.com/browse/dub; echo https://music.youtube.com/browse/real ;;
+*browse/dub*) echo '{"playlist_title":"Album - Vaiana (Deluxe)","url":"https://x/dub","title":"Cavern (Score Demo)","duration":126,"channel":"Mark Mancina"}' ;;
+*browse/real*)
+  echo '{"playlist_title":"Album - Moana (Soundtrack/Deluxe Edition)","url":"https://x/final","title":"Cavern","duration":126,"channel":"Mark Mancina"}'
+  echo '{"playlist_title":"Album - Moana (Soundtrack/Deluxe Edition)","url":"https://x/demo","title":"Cavern (Score Demo)","duration":126,"channel":"Mark Mancina"}' ;;
+esac
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let worker = Worker {
+            library: Library::new(dir.join("music")).unwrap(),
+            ytdlp: fake.to_str().unwrap().into(),
+            parallel: 1,
+            spotify: Spotify::new().unwrap(),
+            failures: Arc::new(Mutex::new(JsonStore::load(&dir, "failures.json"))),
+            queued: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let tracks = worker
+            .album_tracks("Moana (Soundtrack/Deluxe Edition)")
+            .await
+            .unwrap();
+        let urls: Vec<&str> = tracks.iter().map(|c| c.url.as_str()).collect();
+        assert_eq!(urls, ["https://x/final", "https://x/demo"]);
+        let demo = track("Cavern - Score Demo", "Mark Mancina", 125);
+        assert_eq!(choose(&demo, &tracks).unwrap().url, "https://x/demo");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
