@@ -11,8 +11,10 @@ What is not done, and why. Delete an entry when it ships.
   these were ported from did run against the same Lidarr and Prowlarr (lookup,
   `release/push`), not this code.
 - **On a real iPad:** background play with the screen off, the service-worker
-  audio cache (206 slices), the lock and both holds, the iOS 27 status-bar fix
-  (needs the app re-added to the home screen to apply).
+  audio cache (206 slices), the 5-second + hold, whether a tile tap starts sound
+  right away (iOS only allows play inside a tap; songs are fetched ahead so the
+  tap needs no network), the iOS 27 status-bar fix (needs the app re-added to
+  the home screen to apply).
 - **Lidarr `POST /album` for a brand-new album of an existing artist** — the
   body shape (lookup result + artist resource) is from Lidarr's UI, untested
   here.

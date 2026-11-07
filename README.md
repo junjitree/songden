@@ -15,23 +15,23 @@ independent project and is not affiliated with or endorsed by either._
 
 ## What the listener sees
 
-- Big playlist tiles, each a Spotify playlist a grown-up chose.
-- A playlist's songs as a list; tap one to play it.
-- A player bar: previous, a big lion play button, next.
-- A lock: one tap and the screen ignores every touch while the music plays on.
-  Unlocking needs the lock held for 3 seconds.
+- Big playlist tiles, each a Spotify playlist a grown-up chose. Tapping one
+  plays it straight away, picking up where that playlist was left.
+- A now-playing screen: the cover, the song, and previous / a big lion play
+  button / next. Back returns to the tiles.
+- While something plays, a small player bar on the tiles.
 
 Nothing on the listener's side asks them to type, choose or remember anything.
 There is no PIN pad and no login screen in their path: songden was built for a
-child for whom a screen like that is a dead end. Grown-up controls sit behind
-long holds instead, and lead back on their own.
+child for whom a screen like that is a dead end. The grown-ups' page sits behind
+a long hold instead, and leads back on its own.
 
 ## What grown-ups get
 
-- **Playlists by link.** Hold the badge for 5 seconds to open the grown-ups'
-  page, paste a Spotify playlist's share link, done. Remove one with a
-  confirming second tap. The page goes back to the playlists by itself after 30
-  seconds untouched.
+- **Playlists by link.** Hold the **+** for 5 seconds to open the grown-ups'
+  page (a tap does nothing), paste a Spotify playlist's share link, done. Remove
+  one with a confirming second tap. The page goes back to the playlists by
+  itself after 30 seconds untouched.
 - **Songs download themselves.** Songs that are not in Jellyfin yet are looked
   up and handed to Lidarr. When Lidarr's own search finds nothing (soundtracks
   often: their catalogue names never match how releases are named), songden

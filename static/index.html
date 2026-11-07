@@ -27,8 +27,6 @@
     --topbar: 56px;
     --bar: 112px;
     --lion: 72px;
-    /* how far the mane reaches past the play button (icon geometry: (0.385 - 0.22) / 0.44) */
-    --mane-reach: calc(var(--lion) * 0.38);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; }
@@ -52,26 +50,38 @@
   /* top bar: solid, full width, at the very top (see the status-bar note in <head>) */
   .topbar {
     position: fixed; top: 0; left: 0; right: 0; height: var(--topbar);
-    display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px;
     background: var(--bg); z-index: 3;
   }
-  .badge { font-size: 20px; font-weight: 800; padding: 8px; position: relative; }
+  .badge { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 800; padding: 4px 8px 4px 4px; }
+  .badge .icon { font-size: 24px; }
   .back { display: none; align-items: center; gap: 2px; font-size: 19px; font-weight: 800; padding: 8px 14px 8px 4px; border-radius: 24px; background: var(--button); box-shadow: 0 3px 8px var(--shadow); }
   .back svg { width: 28px; }
   .back:active { background: var(--button-press); }
   .topbar .spacer { flex: 1; }
-  body:not([data-view="home"]) .badge { display: none; }
-  body[data-view="list"] .back, body[data-view="parents"] .back { display: flex; }
-  body[data-view="login"] .topbar .lock-btn { display: none; }
+  body:not([data-view="home"]) .badge, body:not([data-view="home"]) .add-btn { display: none; }
+  body[data-view="player"] .back, body[data-view="parents"] .back { display: flex; }
 
-  /* views scroll between the top bar and the player bar */
+  /* the grown-ups' door: a + that opens only after a long hold */
+  .add-btn { position: relative; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: var(--ink-soft); }
+  .add-btn svg.plus { width: 26px; }
+  .ring { position: absolute; inset: 0; width: 48px; height: 48px; transform: rotate(-90deg); pointer-events: none; }
+  .ring circle { fill: none; stroke: var(--ink); stroke-width: 3; }
+  .hint {
+    position: fixed; top: calc(var(--topbar) + 4px); right: 12px; padding: 6px 12px; border-radius: 14px;
+    background: var(--button); box-shadow: 0 3px 8px var(--shadow); font-size: 14px; font-weight: 700;
+    opacity: 0; transition: opacity 0.3s; z-index: 4; pointer-events: none;
+  }
+  .hint.show { opacity: 1; }
+
+  /* views fill the space under the top bar (and above the player bar on the tiles) */
   .view {
     position: fixed; left: 0; right: 0; top: var(--topbar); bottom: 0;
     overflow-y: auto; -webkit-overflow-scrolling: touch; display: none;
     padding: 8px 16px 24px;
   }
-  body.has-track:not([data-view="login"]) .view { bottom: var(--bar); }
-  body[data-view="home"] #home, body[data-view="list"] #list,
+  body.has-track[data-view="home"] #home { bottom: var(--bar); }
+  body[data-view="home"] #home, body[data-view="player"] #player,
   body[data-view="parents"] #parents, body[data-view="login"] #login { display: block; }
 
   /* sign-in (a grown-up does this once per device) */
@@ -80,7 +90,7 @@
   .login h1 { font-size: 26px; }
   .login p { color: var(--ink-soft); }
 
-  /* home: playlist tiles */
+  /* home: playlist tiles; tapping one plays it */
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px; max-width: 1000px; margin: 8px auto; }
   .tile { display: flex; flex-direction: column; gap: 10px; text-align: left; }
   .tile .art {
@@ -90,43 +100,16 @@
   }
   .tile:active .art { transform: scale(0.95); }
   .tile.empty .art { opacity: 0.55; }
+  .tile.current .art { border-color: var(--mane); }
   .tile .name { font-size: 22px; font-weight: 800; line-height: 1.1; padding: 0 4px; }
   .tile .sub { font-size: 15px; color: var(--ink-soft); padding: 0 4px; margin-top: -6px; }
   .note { text-align: center; color: var(--ink-soft); font-size: 18px; margin: 15vh 24px 0; }
 
-  /* list: one playlist's songs */
-  .list-head { display: flex; align-items: center; gap: 16px; max-width: 760px; margin: 8px auto 16px; }
-  .list-head .art { width: 96px; height: 96px; flex: none; border-radius: 18px; border: 4px solid var(--button); background: var(--button) center / cover no-repeat; box-shadow: 0 8px 18px var(--shadow); }
-  .list-head h1 { font-size: 30px; line-height: 1.1; }
-  .list-head p { color: var(--ink-soft); margin-top: 4px; }
-  .songs { list-style: none; padding: 0; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
-  .song {
-    width: 100%; display: flex; align-items: center; gap: 14px; padding: 8px; text-align: left;
-    border-radius: 18px; background: rgba(255, 241, 214, 0.55);
+  /* the controls: previous, the lion, next */
+  .controls {
+    --mane-reach: calc(var(--lion) * 0.38); /* icon geometry: (0.385 - 0.22) / 0.44 */
+    display: flex; align-items: center; gap: calc(var(--mane-reach) + 6px);
   }
-  .song:active { background: var(--button-press); }
-  .song.current { background: var(--button); box-shadow: 0 4px 12px var(--shadow); }
-  .song .thumb { width: 56px; height: 56px; flex: none; border-radius: 12px; background: var(--button) center / cover no-repeat; }
-  .song .text { min-width: 0; flex: 1; }
-  .song .t { font-size: 19px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .song .a { font-size: 14px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .song .eq { width: 26px; flex: none; display: none; }
-  .song.current .eq { display: block; }
-  .waiting { text-align: center; color: var(--ink-soft); margin: 18px 0 0; font-size: 15px; }
-
-  /* the player bar */
-  .bar {
-    position: fixed; left: 0; right: 0; bottom: 0; height: var(--bar); display: none;
-    align-items: center; gap: 12px; padding: 0 16px; background: var(--bg);
-    box-shadow: 0 -6px 18px rgba(74, 36, 8, 0.18); z-index: 2;
-  }
-  body.has-track:not([data-view="login"]) .bar { display: flex; }
-  .now { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
-  .now .art { width: 64px; height: 64px; flex: none; border-radius: 14px; border: 3px solid var(--button); background: var(--button) center / cover no-repeat; }
-  .now .text { min-width: 0; }
-  .now .t { font-size: 17px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .now .a { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .controls { display: flex; align-items: center; gap: calc(var(--mane-reach) + 6px); padding-right: 4px; }
   .skip { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--button); box-shadow: 0 4px 10px var(--shadow); transition: transform 0.12s ease; }
   .skip:active { transform: scale(0.9); background: var(--button-press); }
   .skip svg { width: 46%; }
@@ -145,13 +128,45 @@
   .play .play-icon { margin-left: 8%; }
   .play .pause-icon, .playing .play .play-icon { display: none; }
   .playing .play .pause-icon { display: block; }
+
+  /* now playing */
+  .player { min-height: 100%; display: grid; grid-template-rows: 1fr auto auto auto; place-items: center; gap: 2.5vh; padding-bottom: 2vh; }
+  .player .art { width: min(78vw, 42vh, 520px); aspect-ratio: 1; border-radius: 28px; border: 6px solid var(--button); background: var(--button) center / cover no-repeat; box-shadow: 0 18px 40px var(--shadow); transition: transform 0.4s ease; }
+  .playing .player .art { transform: scale(1.03) rotate(-1deg); }
+  .player .info { text-align: center; max-width: 90vw; }
+  .player .t { font-size: clamp(22px, 4vh, 38px); font-weight: 800; line-height: 1.15; }
+  .player .a { margin-top: 6px; font-size: clamp(14px, 2.1vh, 19px); color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .player .controls { --lion: clamp(96px, 14vh, 140px); margin-block: var(--mane-reach); }
+  .player .skip { width: clamp(64px, 9vh, 96px); height: clamp(64px, 9vh, 96px); }
+  .waiting { color: var(--ink-soft); font-size: 15px; min-height: 1em; text-align: center; }
+  @media (orientation: landscape) and (min-width: 700px) {
+    .player { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 1fr auto auto auto 1fr; column-gap: 6vw; }
+    .player .art { grid-row: 1 / 6; width: min(42vw, 66vh, 560px); }
+    .player .info { grid-column: 2; grid-row: 2; width: 100%; }
+    .player .controls { grid-column: 2; grid-row: 3; }
+    .player .waiting { grid-column: 2; grid-row: 4; }
+  }
+
+  /* the player bar, on the tiles while something is playing */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: var(--bar); display: none;
+    align-items: center; gap: 12px; padding: 0 16px; background: var(--bg);
+    box-shadow: 0 -6px 18px rgba(74, 36, 8, 0.18); z-index: 2;
+  }
+  body.has-track[data-view="home"] .bar { display: flex; }
+  .now { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; text-align: left; }
+  .now .art { width: 64px; height: 64px; flex: none; border-radius: 14px; border: 3px solid var(--button); background: var(--button) center / cover no-repeat; }
+  .now .text { min-width: 0; }
+  .now .t { font-size: 17px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now .a { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar .controls { --lion: 62px; padding-right: 4px; }
   @media (max-width: 480px) {
     .now .text { display: none; }
     .now { flex: 0 0 auto; }
     .bar { justify-content: space-between; }
   }
 
-  /* parents' page */
+  /* grown-ups' page */
   .parents { max-width: 680px; margin: 8px auto; display: flex; flex-direction: column; gap: 14px; }
   .parents h1 { font-size: 26px; }
   .card { background: var(--button); border-radius: 18px; padding: 14px 16px; box-shadow: 0 4px 12px var(--shadow); }
@@ -170,38 +185,21 @@
   .msg.err { color: var(--danger); font-weight: 700; }
   details summary { cursor: pointer; color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
   details li { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
-
-  /* holding: the lock and the parents' door */
-  .lock-btn { position: relative; width: 48px; height: 48px; display: grid; place-items: center; color: var(--ink-soft); border-radius: 50%; }
-  .shield { position: fixed; inset: 0; display: none; z-index: 2; background: rgba(74, 36, 8, 0.12); }
-  .locked .shield { display: block; }
-  .locked .lock-btn { color: var(--ink); }
-  /* the top bar sits above the shield; while locked only the lock itself answers */
-  .locked .topbar > :not(.lock-btn) { pointer-events: none; }
-  /* a grown-up must be able to type the password even if the device was locked */
-  .locked[data-view="login"] .shield { display: none; }
-  .ring { position: absolute; width: 48px; height: 48px; transform: rotate(-90deg); pointer-events: none; }
-  .lock-btn .ring { inset: 0; }
-  .badge .ring { right: -44px; top: 0; }
-  .ring circle { fill: none; stroke: var(--ink); stroke-width: 3; }
-  .hint { position: fixed; top: 19px; font-size: 14px; font-weight: 700; color: var(--ink); opacity: 0; transition: opacity 0.3s; z-index: 4; pointer-events: none; }
-  .hint.show { opacity: 1; }
-  #lock-hint { right: 64px; }
-  #parents-hint { left: 240px; }
 </style>
 </head>
 <body data-view="home">
 <header class="topbar">
-  <button class="badge" id="badge" aria-label="{{title}}">🦁 {{title}}<svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22"/></svg></button>
+  <div class="badge"><span class="icon">🦁</span>{{title}}</div>
   <button class="back" id="back" aria-label="Back">
     <svg viewBox="0 0 24 24"><path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg><span>Back</span>
   </button>
   <div class="spacer"></div>
-  <button class="lock-btn" id="lock" aria-label="Lock screen">
+  <button class="add-btn" id="add" aria-label="For grown-ups: hold to add playlists">
     <svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22"/></svg>
-    <svg viewBox="0 0 24 24" style="width:24px"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3z"/></svg>
+    <svg class="plus" viewBox="0 0 24 24"><path d="M10.75 4h2.5v6.75H20v2.5h-6.75V20h-2.5v-6.75H4v-2.5h6.75z"/></svg>
   </button>
 </header>
+<div class="hint" id="add-hint">Keep holding…</div>
 
 <section class="view" id="login">
   <form class="login" id="login-form">
@@ -215,12 +213,18 @@
     <p class="msg" id="login-msg"></p>
   </form>
 </section>
+
 <section class="view" id="home"><div class="tiles" id="tiles"></div></section>
-<section class="view" id="list">
-  <div class="list-head"><div class="art" id="list-art"></div><div><h1 id="list-name"></h1><p id="list-sub"></p></div></div>
-  <ol class="songs" id="songs"></ol>
-  <p class="waiting" id="list-waiting"></p>
+
+<section class="view" id="player">
+  <div class="player">
+    <div class="art" id="p-art"></div>
+    <div class="info"><div class="t" id="p-title"></div><div class="a" id="p-artist"></div></div>
+    <div class="controls" id="p-controls"></div>
+    <p class="waiting" id="p-waiting"></p>
+  </div>
 </section>
+
 <section class="view" id="parents">
   <div class="parents">
     <h1>For grown-ups</h1>
@@ -238,32 +242,30 @@
 </section>
 
 <footer class="bar">
-  <div class="now"><div class="art" id="now-art"></div><div class="text"><div class="t" id="now-title"></div><div class="a" id="now-artist"></div></div></div>
-  <div class="controls">
-    <button class="skip" id="prev" aria-label="Previous song"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5v14L9 12z"/></svg></button>
-    <div class="lion" id="lion">
-      <svg class="mane" viewBox="0.1 0.12 0.8 0.8" aria-hidden="true"><circle cx="0.5" cy="0.52" r="0.31"/><circle cx="0.8100" cy="0.5200" r="0.075"/><circle cx="0.7864" cy="0.6386" r="0.075"/><circle cx="0.7192" cy="0.7392" r="0.075"/><circle cx="0.6186" cy="0.8064" r="0.075"/><circle cx="0.5000" cy="0.8300" r="0.075"/><circle cx="0.3814" cy="0.8064" r="0.075"/><circle cx="0.2808" cy="0.7392" r="0.075"/><circle cx="0.2136" cy="0.6386" r="0.075"/><circle cx="0.1900" cy="0.5200" r="0.075"/><circle cx="0.2136" cy="0.4014" r="0.075"/><circle cx="0.2808" cy="0.3008" r="0.075"/><circle cx="0.3814" cy="0.2336" r="0.075"/><circle cx="0.5000" cy="0.2100" r="0.075"/><circle cx="0.6186" cy="0.2336" r="0.075"/><circle cx="0.7192" cy="0.3008" r="0.075"/><circle cx="0.7864" cy="0.4014" r="0.075"/><circle cx="0.33" cy="0.33" r="0.085"/><circle cx="0.67" cy="0.33" r="0.085"/><circle class="ear-in" cx="0.33" cy="0.33" r="0.055"/><circle class="ear-in" cx="0.67" cy="0.33" r="0.055"/></svg>
-      <button class="play" id="play" aria-label="Play or pause">
-        <svg class="play-icon" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
-        <svg class="pause-icon" viewBox="0 0 24 24"><path d="M6 4.5h4.2v15H6zm7.8 0H18v15h-4.2z"/></svg>
-      </button>
-    </div>
-    <button class="skip" id="next" aria-label="Next song"><svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5l11 7-11 7z"/></svg></button>
-  </div>
+  <button class="now" id="now" aria-label="Now playing">
+    <div class="art" id="now-art"></div><div class="text"><div class="t" id="now-title"></div><div class="a" id="now-artist"></div></div>
+  </button>
+  <div class="controls" id="bar-controls"></div>
 </footer>
 
-<div class="shield" id="shield"></div>
-<div class="hint" id="lock-hint">Hold to unlock</div>
-<div class="hint" id="parents-hint">Keep holding…</div>
+<template id="controls">
+  <button class="skip js-prev" aria-label="Previous song"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5v14L9 12z"/></svg></button>
+  <div class="lion js-lion">
+    <svg class="mane" viewBox="0.1 0.12 0.8 0.8" aria-hidden="true"><circle cx="0.5" cy="0.52" r="0.31"/><circle cx="0.8100" cy="0.5200" r="0.075"/><circle cx="0.7864" cy="0.6386" r="0.075"/><circle cx="0.7192" cy="0.7392" r="0.075"/><circle cx="0.6186" cy="0.8064" r="0.075"/><circle cx="0.5000" cy="0.8300" r="0.075"/><circle cx="0.3814" cy="0.8064" r="0.075"/><circle cx="0.2808" cy="0.7392" r="0.075"/><circle cx="0.2136" cy="0.6386" r="0.075"/><circle cx="0.1900" cy="0.5200" r="0.075"/><circle cx="0.2136" cy="0.4014" r="0.075"/><circle cx="0.2808" cy="0.3008" r="0.075"/><circle cx="0.3814" cy="0.2336" r="0.075"/><circle cx="0.5000" cy="0.2100" r="0.075"/><circle cx="0.6186" cy="0.2336" r="0.075"/><circle cx="0.7192" cy="0.3008" r="0.075"/><circle cx="0.7864" cy="0.4014" r="0.075"/><circle cx="0.33" cy="0.33" r="0.085"/><circle cx="0.67" cy="0.33" r="0.085"/><circle class="ear-in" cx="0.33" cy="0.33" r="0.055"/><circle class="ear-in" cx="0.67" cy="0.33" r="0.055"/></svg>
+    <button class="play" aria-label="Play or pause">
+      <svg class="play-icon" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+      <svg class="pause-icon" viewBox="0 0 24 24"><path d="M6 4.5h4.2v15H6zm7.8 0H18v15h-4.2z"/></svg>
+    </button>
+  </div>
+  <button class="skip js-next" aria-label="Next song"><svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5l11 7-11 7z"/></svg></button>
+</template>
 
 <script>
 "use strict";
-// How long the lock must be held to unlock.
-const UNLOCK_HOLD_MS = 3000;
-// How long the badge must be held to open the parents' page. Long on purpose:
-// the listener should never land there by accident.
+// How long the + must be held to open the grown-ups' page. Long on purpose: the
+// listener should never land there by accident.
 const PARENTS_HOLD_MS = 5000;
-// The parents' page goes back to the playlists by itself after this long untouched.
+// The grown-ups' page goes back to the playlists by itself after this long untouched.
 const PARENTS_IDLE_MS = 30000;
 // Pressing previous this far into a song restarts it instead.
 const RESTART_AFTER_S = 3;
@@ -273,9 +275,10 @@ const SAVE_EVERY_MS = 5000;
 const $ = (id) => document.getElementById(id);
 const audio = new Audio();
 audio.preload = "auto";
-let shown = null;   // the playlist on the list screen
-let queue = null;   // the playlist playing: {id, name, tracks}
+const lists = {};   // playlist id -> {id, name, tracks, missing, ...}, fetched ahead so a tap can play at once
+let queue = null;   // the playlist playing
 let index = 0;
+let failures = 0;   // songs in a row that couldn't play
 
 const store = {
   get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
@@ -311,12 +314,13 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 let idleTimer = 0;
 function show(view) {
   document.body.dataset.view = view;
-  if (view === "home" || view === "list") store.set("view", view);
+  if (view === "home" || view === "player") store.set("view", view);
   clearTimeout(idleTimer);
   if (view === "parents") armIdle();
+  render();
 }
 
-// Any touch on the parents' page restarts its idle clock.
+// Any touch on the grown-ups' page restarts its idle clock.
 function armIdle() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => { if (document.body.dataset.view === "parents") goHome(); }, PARENTS_IDLE_MS);
@@ -334,9 +338,29 @@ async function goHome() {
   try {
     const { playlists } = await getJSON("/api/playlists");
     renderTiles(playlists);
+    // fetch every playlist's songs now, so tapping a tile can start playing at once
+    await Promise.all(playlists.map((p) => refreshList(p.id)));
   } catch (err) {
     if (err instanceof SignedOut) signedOut();
     else console.warn("playlists unavailable", err);
+  }
+}
+
+async function refreshList(id) {
+  try {
+    lists[id] = await getJSON(`/api/playlist/${id}`);
+  } catch (err) {
+    if (err instanceof SignedOut) throw err;
+    console.warn("playlist unavailable", id, err);
+    return;
+  }
+  // a fresh copy of the playlist that is playing: keep the current song going
+  if (queue && queue.id === id) {
+    const currentId = queue.tracks[index]?.id;
+    queue = lists[id];
+    const at = queue.tracks.findIndex((t) => t.id === currentId);
+    if (at >= 0) index = at;
+    render();
   }
 }
 
@@ -344,59 +368,37 @@ function renderTiles(playlists) {
   const tiles = $("tiles");
   tiles.replaceChildren();
   if (!playlists.length) {
-    tiles.append(el("p", { class: "note" }, "No playlists yet. A grown-up can add them."));
+    tiles.append(el("p", { class: "note" }, "No playlists yet. A grown-up can add them with the +."));
     return;
   }
   for (const p of playlists) {
-    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}`, onclick: () => openList(p.id) },
+    const current = queue && queue.id === p.id;
+    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}${current ? " current" : ""}`, onclick: () => openPlaylist(p.id) },
       el("div", { class: "art", style: art(`/api/pcover/${p.id}`) }),
       el("div", { class: "name" }, p.name),
       el("div", { class: "sub" }, p.count ? plural(p.count, "song") : "Getting songs…")));
   }
 }
 
-async function openList(id) {
-  try {
-    shown = await getJSON(`/api/playlist/${id}`);
-  } catch (err) {
-    if (err instanceof SignedOut) signedOut();
-    else console.warn("playlist unavailable", err);
-    return;
-  }
-  store.set("list", id);
-  $("list-art").style.cssText = art(`/api/pcover/${id}`);
-  $("list-name").textContent = shown.name;
-  $("list-sub").textContent = plural(shown.tracks.length, "song");
-  $("list-waiting").textContent = shown.missing.length ? `${shown.missing.length} more on the way` : "";
-  renderSongs();
-  show("list");
-}
-
-function renderSongs() {
-  const list = $("songs");
-  list.replaceChildren();
-  shown.tracks.forEach((t, i) => {
-    const current = queue && queue.id === shown.id && queue.tracks[index]?.id === t.id;
-    list.append(el("li", {},
-      el("button", { class: `song${current ? " current" : ""}`, onclick: () => playFrom(shown, i) },
-        el("div", { class: "thumb", style: art(`/api/cover/${t.id}`) }),
-        el("div", { class: "text" }, el("div", { class: "t" }, t.title), el("div", { class: "a" }, t.artist)),
-        eqIcon())));
-  });
-}
-
-function eqIcon() {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("class", "eq");
-  const path = document.createElementNS(ns, "path");
-  path.setAttribute("d", "M4 10h3v10H4zm6.5-6h3v16h-3zM17 13h3v7h-3z");
-  svg.append(path);
-  return svg;
+// Tapping a tile plays that playlist straight away: from where it was left, or
+// from the top. Tapping the one already playing just shows it.
+async function openPlaylist(id) {
+  if (queue && queue.id === id) { show("player"); return; }
+  if (!lists[id]) await refreshList(id).catch(() => {});
+  const list = lists[id];
+  if (!list) return;
+  queue = list;
+  failures = 0;
+  const saved = (store.get("positions") || {})[id];
+  const at = saved ? list.tracks.findIndex((t) => t.id === saved.id) : -1;
+  show("player");
+  if (!list.tracks.length) { audio.pause(); audio.removeAttribute("src"); render(); return; }
+  load(at >= 0 ? at : 0, at >= 0 ? saved.time || 0 : 0);
+  play();
 }
 
 $("back").addEventListener("click", goHome);
+$("now").addEventListener("click", () => { if (queue) show("player"); });
 
 // ---- sign-in ---------------------------------------------------------------
 
@@ -425,11 +427,19 @@ function render() {
   document.body.classList.toggle("playing", !audio.paused);
   const t = queue && queue.tracks[index];
   document.body.classList.toggle("has-track", Boolean(t));
+  if (queue) {
+    $("p-art").style.cssText = art(t ? `/api/cover/${t.id}` : `/api/pcover/${queue.id}`);
+    $("p-title").textContent = t ? t.title : queue.name;
+    $("p-artist").textContent = t ? t.artist : "";
+    const waiting = queue.missing ? queue.missing.length : 0;
+    $("p-waiting").textContent = !queue.tracks.length ? "Getting the songs ready…"
+      : failures >= queue.tracks.length ? "Can't play right now. Try again soon."
+      : waiting ? `${waiting} more on the way` : "";
+  }
   if (!t) return;
   $("now-art").style.cssText = art(`/api/cover/${t.id}`);
   $("now-title").textContent = t.title;
   $("now-artist").textContent = t.artist;
-  if (shown && document.body.dataset.view === "list") renderSongs();
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: t.title, artist: t.artist, album: queue.name,
@@ -448,13 +458,11 @@ function load(i, startAt = 0) {
 }
 
 function savePosition(time) {
-  if (queue && queue.tracks[index]) store.set("position", { list: queue.id, id: queue.tracks[index].id, time });
-}
-
-function playFrom(playlist, i) {
-  queue = { id: playlist.id, name: playlist.name, tracks: playlist.tracks };
-  load(i);
-  play();
+  if (!queue || !queue.tracks[index]) return;
+  const positions = store.get("positions") || {};
+  positions[queue.id] = { id: queue.tracks[index].id, time };
+  store.set("positions", positions);
+  store.set("playing", queue.id);
 }
 
 function play() {
@@ -471,14 +479,27 @@ function prev() {
   play();
 }
 
-// the whole lion (mane included) plays and pauses, not just its face
-$("lion").addEventListener("click", toggle);
-$("next").addEventListener("click", next);
-$("prev").addEventListener("click", prev);
+// The same controls in the player bar and on the now-playing screen.
+for (const host of [$("bar-controls"), $("p-controls")]) {
+  host.append($("controls").content.cloneNode(true));
+  // the whole lion (mane included) plays and pauses, not just its face
+  host.querySelector(".js-lion").addEventListener("click", toggle);
+  host.querySelector(".js-next").addEventListener("click", next);
+  host.querySelector(".js-prev").addEventListener("click", prev);
+}
 audio.addEventListener("play", render);
 audio.addEventListener("pause", render);
 audio.addEventListener("ended", next);
-audio.addEventListener("error", () => { if (queue && queue.tracks.length > 1) next(); });
+// A song that can't play is skipped, but only once round the playlist: offline with
+// nothing saved yet, every song fails, and skipping on would loop forever.
+audio.addEventListener("playing", () => { failures = 0; render(); });
+audio.addEventListener("error", () => {
+  if (!queue) return;
+  failures += 1;
+  if (failures < queue.tracks.length) { next(); return; }
+  audio.pause();
+  render();
+});
 
 let lastSave = 0;
 audio.addEventListener("timeupdate", () => {
@@ -494,52 +515,40 @@ if ("mediaSession" in navigator) {
   navigator.mediaSession.setActionHandler("previoustrack", prev);
 }
 
-// ---- holding: the lock and the parents' door --------------------------------
+// ---- the grown-ups' door: hold the + -----------------------------------------
 
-// Calls done() once `button` has been held for `ms`, filling its ring meanwhile.
-// Letting go early does nothing.
-function holdable(button, hint, ms, done) {
+{
+  const button = $("add");
+  const hint = $("add-hint");
   const ring = button.querySelector(".ring circle");
   const length = 2 * Math.PI * 22;
   ring.style.strokeDasharray = length;
   ring.style.strokeDashoffset = length;
   let start = 0;
   let frame = 0;
+  // Letting go early does nothing.
   const stop = () => {
     cancelAnimationFrame(frame);
     ring.style.strokeDashoffset = length;
     hint.classList.remove("show");
   };
   const tick = () => {
-    const progress = Math.min((performance.now() - start) / ms, 1);
+    const progress = Math.min((performance.now() - start) / PARENTS_HOLD_MS, 1);
     ring.style.strokeDashoffset = length * (1 - progress);
-    if (progress >= 1) { stop(); done(); return; }
+    if (progress >= 1) { stop(); show("parents"); loadParents(); return; }
     frame = requestAnimationFrame(tick);
   };
+  button.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    start = performance.now();
+    hint.classList.add("show");
+    frame = requestAnimationFrame(tick);
+  });
   for (const ev of ["pointerup", "pointercancel", "pointerleave"]) button.addEventListener(ev, stop);
   button.addEventListener("contextmenu", (e) => e.preventDefault());
-  return () => { start = performance.now(); hint.classList.add("show"); frame = requestAnimationFrame(tick); };
 }
 
-// The lock: a tap locks; unlocking needs a hold. While locked a shield swallows
-// every touch except on the lock itself, and the music keeps playing.
-function setLocked(locked) {
-  document.body.classList.toggle("locked", locked);
-  $("lock").setAttribute("aria-label", locked ? "Hold to unlock" : "Lock screen");
-  store.set("locked", locked);
-}
-const holdToUnlock = holdable($("lock"), $("lock-hint"), UNLOCK_HOLD_MS, () => setLocked(false));
-$("lock").addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  if (document.body.classList.contains("locked")) holdToUnlock();
-  else setLocked(true);
-});
-$("shield").addEventListener("pointerdown", (e) => e.preventDefault());
-
-const holdForParents = holdable($("badge"), $("parents-hint"), PARENTS_HOLD_MS, () => { show("parents"); loadParents(); });
-$("badge").addEventListener("pointerdown", (e) => { e.preventDefault(); holdForParents(); });
-
-// ---- parents' page ---------------------------------------------------------
+// ---- grown-ups' page ---------------------------------------------------------
 
 async function loadParents() {
   let status;
@@ -564,6 +573,8 @@ async function loadParents() {
       }
       clearTimeout(armed);
       await fetch(`/api/parents/playlists/${p.id}`, { method: "DELETE" });
+      if (queue && queue.id === p.id) { audio.pause(); queue = null; store.set("playing", null); render(); }
+      delete lists[p.id];
       loadParents();
     });
     const list = waiting
@@ -608,22 +619,24 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   const view = document.body.dataset.view;
   if (view === "home") goHome();
-  else if (view === "list" && shown) openList(shown.id);
+  else if (view === "player" && queue) refreshList(queue.id).catch(signedOut);
 });
 
 (async () => {
-  setLocked(Boolean(store.get("locked")));
+  // read before goHome, which records the tiles as the current screen
+  const savedView = store.get("view");
   await goHome();
   if (document.body.dataset.view === "login") return;
-  const saved = store.get("position");
-  if (saved) {
-    try {
-      const p = await getJSON(`/api/playlist/${saved.list}`);
-      const at = p.tracks.findIndex((t) => t.id === saved.id);
-      if (at >= 0) { queue = { id: p.id, name: p.name, tracks: p.tracks }; load(at, saved.time || 0); }
-    } catch { /* that playlist is gone: start fresh */ }
+  // put back what was playing, paused, where it was left
+  const playing = store.get("playing");
+  const list = playing && lists[playing];
+  const saved = list && (store.get("positions") || {})[playing];
+  const at = saved ? list.tracks.findIndex((t) => t.id === saved.id) : -1;
+  if (at >= 0) {
+    queue = list;
+    load(at, saved.time || 0);
+    if (savedView === "player") show("player");
   }
-  if (store.get("view") === "list" && store.get("list")) await openList(store.get("list"));
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("no offline cache", err));
 })();
 </script>
