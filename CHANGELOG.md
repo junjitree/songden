@@ -16,6 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   elapsed/total times. The controls never move: the title always takes two lines
   (longer ones end in an ellipsis), the artist one, the times a fixed width.
   Anywhere on the player bar except its buttons opens the full screen.
+- The screen stays on while music plays (Screen Wake Lock) and may sleep again
+  when paused.
 - The grown-ups' page behind a 5-second hold on a + button: add a Spotify
   playlist by its share link, remove one with a confirming second tap, see what
   is downloaded and what is still waiting, with a Downloads card listing each
