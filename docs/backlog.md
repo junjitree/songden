@@ -43,10 +43,13 @@ What is not done, and why. Delete an entry when it ships.
   retry ends, so one song appears as both "downloading" and "not found". Seen in
   `/api/parents/status` output; cosmetic, and it clears when the retry ends. The
   fix is to skip failures whose id is queued.
-- **Moana's score demos stay not found:** Maui Battles, Cavern, It's Called
-  Wayfinding, Maui Leaves and Sea Monsters, all "Score Demo" by Mark Mancina.
-  Every search came back without a match; that they are not on YouTube at all is
-  a guess.
+- **Moana's score demos stay not found, though YouTube Music has them:** Maui
+  Battles, Cavern, It's Called Wayfinding, Maui Leaves and Sea Monsters, all
+  "Score Demo" by Mark Mancina. All are listed in YouTube Music's 66-track
+  "Moana (Original Motion Picture Soundtrack/Deluxe Edition)" album, seen with
+  `yt-dlp --flat-playlist`, but song searches do not surface them. A fix would
+  search `#albums` for the Spotify album's name, open the album with the same
+  name that lists the title, and run its track through `choose`. Not built.
 
 ## Considered and declined
 
