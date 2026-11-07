@@ -431,14 +431,13 @@ $("back").addEventListener("click", goHome);
 // a tap, or a swipe up that the screen follows. There is no swipe down; Back
 // closes it.
 {
-  // a swipe past this share of the screen, or this fast, opens it on release
-  const OPEN_SHARE = 0.25;
-  const OPEN_SPEED = 0.5; // px per ms
+  // released past this share of the screen (the middle), it opens; short of it, it slides back
+  const OPEN_SHARE = 0.5;
   // movement below this is a tap, not a swipe
   const SLOP = 8;
   const bar = $("bar");
   const player = $("player");
-  let start = null;   // {y, t} of the press
+  let start = null;   // {y} of the press
   let lastY = 0;      // the finger's latest position (a cancel reports none)
   let swiped = false;
 
@@ -461,7 +460,7 @@ $("back").addEventListener("click", goHome);
 
   bar.addEventListener("pointerdown", (e) => {
     if (!queue || e.target.closest(".controls")) return;
-    start = { y: e.clientY, t: performance.now() };
+    start = { y: e.clientY };
     lastY = e.clientY;
     swiped = false;
     try { bar.setPointerCapture(e.pointerId); } catch { /* the swipe still works while over the bar */ }
@@ -481,9 +480,8 @@ $("back").addEventListener("click", goHome);
   const release = () => {
     if (!start) return;
     const up = start.y - lastY;
-    const speed = up / Math.max(performance.now() - start.t, 1);
     start = null;
-    if (swiped) settle(up > height() * OPEN_SHARE || speed > OPEN_SPEED);
+    if (swiped) settle(up > height() * OPEN_SHARE);
   };
   bar.addEventListener("pointerup", release);
   bar.addEventListener("pointercancel", release);
