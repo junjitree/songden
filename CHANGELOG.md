@@ -37,6 +37,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Spotify's, most of the title's telling words agree, and it isn't a version the
   Spotify title didn't ask for (live, cover, karaoke, sped up, reprise…). The
   container carries yt-dlp, Deno and ffmpeg and updates yt-dlp on start.
+- A result must be sung by one of Spotify's artists (not counting labels like
+  "Disney"), and language words ("Tagalog", "Spanish"…) count as a version the
+  title must ask for: dubs run the same length and can keep the title. What was
+  used for each song is kept beside it as `<id>.source.json`.
+- Downloaded songs carry their title, artists, album, year and cover in the file
+  (written with ffmpeg), so the folder works as a Jellyfin music library too.
+  Songs fetched before this are tagged on the next "Check for new songs".
 - A shared family password with year-long sessions renewed on use, a global
   limit on wrong passwords, and `SESSIONS_SINCE` to sign every device out.
 - Offline play: songs are saved on the device after their first play and
