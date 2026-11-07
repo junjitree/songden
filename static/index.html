@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS 27: black-translucent puts a system blur over the top of the app; the plain bar plus a
+     solid full-width top bar (.topbar) gives a solid gold status bar instead. Re-add to apply. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="{{short_name}}">
+<meta name="theme-color" content="#f2a03d">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<title>{{short_name}}</title>
+<style>
+  :root {
+    --bg: #f2a03d;
+    --ink: #4a2408;
+    --ink-soft: #7a4316;
+    --button: #fff1d6;
+    --button-press: #ffe2a8;
+    --mane: #b8561a;
+    --face: #ffd27a;
+    --shadow: rgba(74, 36, 8, 0.35);
+    --danger: #b3261e;
+    --topbar: 56px;
+    --bar: 112px;
+    --lion: 72px;
+    /* how far the mane reaches past the play button (icon geometry: (0.385 - 0.22) / 0.44) */
+    --mane-reach: calc(var(--lion) * 0.38);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  html { background: var(--bg); }
+  body {
+    /* faint paw prints */
+    background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='%23e08f2f'%3E%3Cg transform='translate(28 30) rotate(-18)'%3E%3Cellipse cx='0' cy='8' rx='9' ry='7.5'/%3E%3Ccircle cx='-9' cy='-4' r='3.6'/%3E%3Ccircle cx='-3' cy='-9' r='3.6'/%3E%3Ccircle cx='4' cy='-9' r='3.6'/%3E%3Ccircle cx='10' cy='-4' r='3.6'/%3E%3C/g%3E%3Cg transform='translate(100 100) rotate(22)'%3E%3Cellipse cx='0' cy='8' rx='9' ry='7.5'/%3E%3Ccircle cx='-9' cy='-4' r='3.6'/%3E%3Ccircle cx='-3' cy='-9' r='3.6'/%3E%3Ccircle cx='4' cy='-9' r='3.6'/%3E%3Ccircle cx='10' cy='-4' r='3.6'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+    color: var(--ink);
+    font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  svg { fill: currentColor; }
+
+  /* top bar: solid, full width, at the very top (see the status-bar note in <head>) */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: var(--topbar);
+    display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px;
+    background: var(--bg); z-index: 3;
+  }
+  .badge { font-size: 20px; font-weight: 800; padding: 8px; position: relative; }
+  .back { display: none; align-items: center; gap: 2px; font-size: 19px; font-weight: 800; padding: 8px 14px 8px 4px; border-radius: 24px; background: var(--button); box-shadow: 0 3px 8px var(--shadow); }
+  .back svg { width: 28px; }
+  .back:active { background: var(--button-press); }
+  .topbar .spacer { flex: 1; }
+  body:not([data-view="home"]) .badge { display: none; }
+  body[data-view="list"] .back, body[data-view="parents"] .back { display: flex; }
+  body[data-view="login"] .topbar .lock-btn { display: none; }
+
+  /* views scroll between the top bar and the player bar */
+  .view {
+    position: fixed; left: 0; right: 0; top: var(--topbar); bottom: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch; display: none;
+    padding: 8px 16px 24px;
+  }
+  body.has-track:not([data-view="login"]) .view { bottom: var(--bar); }
+  body[data-view="home"] #home, body[data-view="list"] #list,
+  body[data-view="parents"] #parents, body[data-view="login"] #login { display: block; }
+
+  /* sign-in (a grown-up does this once per device) */
+  .login { max-width: 420px; margin: 10vh auto 0; text-align: center; display: flex; flex-direction: column; gap: 14px; }
+  .login .lion-big { width: 120px; margin: 0 auto; }
+  .login h1 { font-size: 26px; }
+  .login p { color: var(--ink-soft); }
+
+  /* home: playlist tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px; max-width: 1000px; margin: 8px auto; }
+  .tile { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+  .tile .art {
+    width: 100%; aspect-ratio: 1; border-radius: 22px; border: 5px solid var(--button);
+    background: var(--button) center / cover no-repeat; box-shadow: 0 10px 24px var(--shadow);
+    transition: transform 0.12s ease;
+  }
+  .tile:active .art { transform: scale(0.95); }
+  .tile.empty .art { opacity: 0.55; }
+  .tile .name { font-size: 22px; font-weight: 800; line-height: 1.1; padding: 0 4px; }
+  .tile .sub { font-size: 15px; color: var(--ink-soft); padding: 0 4px; margin-top: -6px; }
+  .note { text-align: center; color: var(--ink-soft); font-size: 18px; margin: 15vh 24px 0; }
+
+  /* list: one playlist's songs */
+  .list-head { display: flex; align-items: center; gap: 16px; max-width: 760px; margin: 8px auto 16px; }
+  .list-head .art { width: 96px; height: 96px; flex: none; border-radius: 18px; border: 4px solid var(--button); background: var(--button) center / cover no-repeat; box-shadow: 0 8px 18px var(--shadow); }
+  .list-head h1 { font-size: 30px; line-height: 1.1; }
+  .list-head p { color: var(--ink-soft); margin-top: 4px; }
+  .songs { list-style: none; padding: 0; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .song {
+    width: 100%; display: flex; align-items: center; gap: 14px; padding: 8px; text-align: left;
+    border-radius: 18px; background: rgba(255, 241, 214, 0.55);
+  }
+  .song:active { background: var(--button-press); }
+  .song.current { background: var(--button); box-shadow: 0 4px 12px var(--shadow); }
+  .song .thumb { width: 56px; height: 56px; flex: none; border-radius: 12px; background: var(--button) center / cover no-repeat; }
+  .song .text { min-width: 0; flex: 1; }
+  .song .t { font-size: 19px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song .a { font-size: 14px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .song .eq { width: 26px; flex: none; display: none; }
+  .song.current .eq { display: block; }
+  .waiting { text-align: center; color: var(--ink-soft); margin: 18px 0 0; font-size: 15px; }
+
+  /* the player bar */
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: var(--bar); display: none;
+    align-items: center; gap: 12px; padding: 0 16px; background: var(--bg);
+    box-shadow: 0 -6px 18px rgba(74, 36, 8, 0.18); z-index: 2;
+  }
+  body.has-track:not([data-view="login"]) .bar { display: flex; }
+  .now { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+  .now .art { width: 64px; height: 64px; flex: none; border-radius: 14px; border: 3px solid var(--button); background: var(--button) center / cover no-repeat; }
+  .now .text { min-width: 0; }
+  .now .t { font-size: 17px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now .a { font-size: 13px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .controls { display: flex; align-items: center; gap: calc(var(--mane-reach) + 6px); padding-right: 4px; }
+  .skip { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--button); box-shadow: 0 4px 10px var(--shadow); transition: transform 0.12s ease; }
+  .skip:active { transform: scale(0.9); background: var(--button-press); }
+  .skip svg { width: 46%; }
+  /* The play button is the lion from the app icon (same shapes, no eyes or nose): the button is
+     its face, the mane and ears are drawn around it in the icon's own units. The SVG's viewBox
+     is 0.8 units wide and the face is 0.44, so the SVG is 0.8 / 0.44 of the button. The whole
+     lion is the tap target. */
+  .lion { position: relative; width: var(--lion); height: var(--lion); flex: none; cursor: pointer; }
+  .lion .mane { position: absolute; inset: -40.91%; width: 181.82%; height: 181.82%; overflow: visible; fill: var(--mane); }
+  .mane .ear-in { fill: var(--face); }
+  .playing .lion .mane { animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(1.05); } }
+  .play { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: var(--face); box-shadow: 0 6px 14px var(--shadow); transition: transform 0.12s ease; }
+  .lion:active .play { transform: scale(0.92); }
+  .play svg { width: 40%; }
+  .play .play-icon { margin-left: 8%; }
+  .play .pause-icon, .playing .play .play-icon { display: none; }
+  .playing .play .pause-icon { display: block; }
+  @media (max-width: 480px) {
+    .now .text { display: none; }
+    .now { flex: 0 0 auto; }
+    .bar { justify-content: space-between; }
+  }
+
+  /* parents' page */
+  .parents { max-width: 680px; margin: 8px auto; display: flex; flex-direction: column; gap: 14px; }
+  .parents h1 { font-size: 26px; }
+  .card { background: var(--button); border-radius: 18px; padding: 14px 16px; box-shadow: 0 4px 12px var(--shadow); }
+  .card h2 { font-size: 17px; margin-bottom: 8px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row + .row { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(74, 36, 8, 0.12); }
+  .row .text { flex: 1; min-width: 0; }
+  .row .t { font-weight: 800; }
+  .row .a { font-size: 14px; color: var(--ink-soft); }
+  .field { display: flex; gap: 8px; }
+  .field input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 12px; border-radius: 12px; border: 2px solid rgba(74, 36, 8, 0.25); background: #fff; color: var(--ink); -webkit-user-select: text; user-select: text; }
+  .pill { padding: 10px 16px; border-radius: 12px; background: var(--ink); color: var(--button); font-weight: 800; white-space: nowrap; }
+  .pill.soft { background: transparent; color: var(--mane); border: 2px solid var(--mane); padding: 8px 12px; }
+  .pill.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .msg { font-size: 14px; margin-top: 8px; color: var(--ink-soft); min-height: 1em; }
+  .msg.err { color: var(--danger); font-weight: 700; }
+  details summary { cursor: pointer; color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+  details li { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+
+  /* holding: the lock and the parents' door */
+  .lock-btn { position: relative; width: 48px; height: 48px; display: grid; place-items: center; color: var(--ink-soft); border-radius: 50%; }
+  .shield { position: fixed; inset: 0; display: none; z-index: 2; background: rgba(74, 36, 8, 0.12); }
+  .locked .shield { display: block; }
+  .locked .lock-btn { color: var(--ink); }
+  /* the top bar sits above the shield; while locked only the lock itself answers */
+  .locked .topbar > :not(.lock-btn) { pointer-events: none; }
+  /* a grown-up must be able to type the password even if the device was locked */
+  .locked[data-view="login"] .shield { display: none; }
+  .ring { position: absolute; width: 48px; height: 48px; transform: rotate(-90deg); pointer-events: none; }
+  .lock-btn .ring { inset: 0; }
+  .badge .ring { right: -44px; top: 0; }
+  .ring circle { fill: none; stroke: var(--ink); stroke-width: 3; }
+  .hint { position: fixed; top: 19px; font-size: 14px; font-weight: 700; color: var(--ink); opacity: 0; transition: opacity 0.3s; z-index: 4; pointer-events: none; }
+  .hint.show { opacity: 1; }
+  #lock-hint { right: 64px; }
+  #parents-hint { left: 240px; }
+</style>
+</head>
+<body data-view="home">
+<header class="topbar">
+  <button class="badge" id="badge" aria-label="{{title}}">🦁 {{title}}<svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22"/></svg></button>
+  <button class="back" id="back" aria-label="Back">
+    <svg viewBox="0 0 24 24"><path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg><span>Back</span>
+  </button>
+  <div class="spacer"></div>
+  <button class="lock-btn" id="lock" aria-label="Lock screen">
+    <svg class="ring" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22"/></svg>
+    <svg viewBox="0 0 24 24" style="width:24px"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm-3 8V7a3 3 0 0 1 6 0v3z"/></svg>
+  </button>
+</header>
+
+<section class="view" id="login">
+  <form class="login" id="login-form">
+    <img class="lion-big" src="/icon-192.png" alt="">
+    <h1>{{title}}</h1>
+    <p>A grown-up signs in once on this device.</p>
+    <div class="field">
+      <input id="password" type="password" autocomplete="current-password" placeholder="Family password">
+      <button class="pill" type="submit">Sign in</button>
+    </div>
+    <p class="msg" id="login-msg"></p>
+  </form>
+</section>
+<section class="view" id="home"><div class="tiles" id="tiles"></div></section>
+<section class="view" id="list">
+  <div class="list-head"><div class="art" id="list-art"></div><div><h1 id="list-name"></h1><p id="list-sub"></p></div></div>
+  <ol class="songs" id="songs"></ol>
+  <p class="waiting" id="list-waiting"></p>
+</section>
+<section class="view" id="parents">
+  <div class="parents">
+    <h1>For grown-ups</h1>
+    <div class="card">
+      <h2>Add a playlist</h2>
+      <form class="field" id="add-form">
+        <input id="add-link" type="url" inputmode="url" placeholder="Paste a Spotify playlist link" autocomplete="off">
+        <button class="pill" type="submit">Add</button>
+      </form>
+      <p class="msg" id="add-msg">In Spotify: the playlist → ⋯ → Share → Copy link. It must be public.</p>
+    </div>
+    <div class="card"><h2>Playlists</h2><div id="parent-list"></div></div>
+    <p class="msg" id="dl-msg"></p>
+  </div>
+</section>
+
+<footer class="bar">
+  <div class="now"><div class="art" id="now-art"></div><div class="text"><div class="t" id="now-title"></div><div class="a" id="now-artist"></div></div></div>
+  <div class="controls">
+    <button class="skip" id="prev" aria-label="Previous song"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6zM20 5v14L9 12z"/></svg></button>
+    <div class="lion" id="lion">
+      <svg class="mane" viewBox="0.1 0.12 0.8 0.8" aria-hidden="true"><circle cx="0.5" cy="0.52" r="0.31"/><circle cx="0.8100" cy="0.5200" r="0.075"/><circle cx="0.7864" cy="0.6386" r="0.075"/><circle cx="0.7192" cy="0.7392" r="0.075"/><circle cx="0.6186" cy="0.8064" r="0.075"/><circle cx="0.5000" cy="0.8300" r="0.075"/><circle cx="0.3814" cy="0.8064" r="0.075"/><circle cx="0.2808" cy="0.7392" r="0.075"/><circle cx="0.2136" cy="0.6386" r="0.075"/><circle cx="0.1900" cy="0.5200" r="0.075"/><circle cx="0.2136" cy="0.4014" r="0.075"/><circle cx="0.2808" cy="0.3008" r="0.075"/><circle cx="0.3814" cy="0.2336" r="0.075"/><circle cx="0.5000" cy="0.2100" r="0.075"/><circle cx="0.6186" cy="0.2336" r="0.075"/><circle cx="0.7192" cy="0.3008" r="0.075"/><circle cx="0.7864" cy="0.4014" r="0.075"/><circle cx="0.33" cy="0.33" r="0.085"/><circle cx="0.67" cy="0.33" r="0.085"/><circle class="ear-in" cx="0.33" cy="0.33" r="0.055"/><circle class="ear-in" cx="0.67" cy="0.33" r="0.055"/></svg>
+      <button class="play" id="play" aria-label="Play or pause">
+        <svg class="play-icon" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg class="pause-icon" viewBox="0 0 24 24"><path d="M6 4.5h4.2v15H6zm7.8 0H18v15h-4.2z"/></svg>
+      </button>
+    </div>
+    <button class="skip" id="next" aria-label="Next song"><svg viewBox="0 0 24 24"><path d="M15.5 5H18v14h-2.5zM4 5l11 7-11 7z"/></svg></button>
+  </div>
+</footer>
+
+<div class="shield" id="shield"></div>
+<div class="hint" id="lock-hint">Hold to unlock</div>
+<div class="hint" id="parents-hint">Keep holding…</div>
+
+<script>
+"use strict";
+// How long the lock must be held to unlock.
+const UNLOCK_HOLD_MS = 3000;
+// How long the badge must be held to open the parents' page. Long on purpose:
+// the listener should never land there by accident.
+const PARENTS_HOLD_MS = 5000;
+// The parents' page goes back to the playlists by itself after this long untouched.
+const PARENTS_IDLE_MS = 30000;
+// Pressing previous this far into a song restarts it instead.
+const RESTART_AFTER_S = 3;
+// How often the playback position is saved while playing.
+const SAVE_EVERY_MS = 5000;
+
+const $ = (id) => document.getElementById(id);
+const audio = new Audio();
+audio.preload = "auto";
+let shown = null;   // the playlist on the list screen
+let queue = null;   // the playlist playing: {id, name, tracks}
+let index = 0;
+
+const store = {
+  get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode: not remembered */ } },
+};
+
+class SignedOut extends Error {}
+
+async function getJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) throw new SignedOut();
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "style") node.style.cssText = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  node.append(...kids);
+  return node;
+}
+
+const art = (url) => `background-image:url("${url}")`;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// ---- screens -------------------------------------------------------------
+
+let idleTimer = 0;
+function show(view) {
+  document.body.dataset.view = view;
+  if (view === "home" || view === "list") store.set("view", view);
+  clearTimeout(idleTimer);
+  if (view === "parents") armIdle();
+}
+
+// Any touch on the parents' page restarts its idle clock.
+function armIdle() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { if (document.body.dataset.view === "parents") goHome(); }, PARENTS_IDLE_MS);
+}
+$("parents").addEventListener("pointerdown", armIdle);
+$("parents").addEventListener("input", armIdle);
+
+function signedOut() {
+  show("login");
+  $("password").value = "";
+}
+
+async function goHome() {
+  show("home");
+  try {
+    const { playlists } = await getJSON("/api/playlists");
+    renderTiles(playlists);
+  } catch (err) {
+    if (err instanceof SignedOut) signedOut();
+    else console.warn("playlists unavailable", err);
+  }
+}
+
+function renderTiles(playlists) {
+  const tiles = $("tiles");
+  tiles.replaceChildren();
+  if (!playlists.length) {
+    tiles.append(el("p", { class: "note" }, "No playlists yet. A grown-up can add them."));
+    return;
+  }
+  for (const p of playlists) {
+    tiles.append(el("button", { class: `tile${p.count ? "" : " empty"}`, onclick: () => openList(p.id) },
+      el("div", { class: "art", style: art(`/api/pcover/${p.id}`) }),
+      el("div", { class: "name" }, p.name),
+      el("div", { class: "sub" }, p.count ? plural(p.count, "song") : "Getting songs…")));
+  }
+}
+
+async function openList(id) {
+  try {
+    shown = await getJSON(`/api/playlist/${id}`);
+  } catch (err) {
+    if (err instanceof SignedOut) signedOut();
+    else console.warn("playlist unavailable", err);
+    return;
+  }
+  store.set("list", id);
+  $("list-art").style.cssText = art(`/api/pcover/${id}`);
+  $("list-name").textContent = shown.name;
+  $("list-sub").textContent = plural(shown.tracks.length, "song");
+  $("list-waiting").textContent = shown.missing.length ? `${shown.missing.length} more on the way` : "";
+  renderSongs();
+  show("list");
+}
+
+function renderSongs() {
+  const list = $("songs");
+  list.replaceChildren();
+  shown.tracks.forEach((t, i) => {
+    const current = queue && queue.id === shown.id && queue.tracks[index]?.id === t.id;
+    list.append(el("li", {},
+      el("button", { class: `song${current ? " current" : ""}`, onclick: () => playFrom(shown, i) },
+        el("div", { class: "thumb", style: art(`/api/cover/${t.id}`) }),
+        el("div", { class: "text" }, el("div", { class: "t" }, t.title), el("div", { class: "a" }, t.artist)),
+        eqIcon())));
+  });
+}
+
+function eqIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "eq");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M4 10h3v10H4zm6.5-6h3v16h-3zM17 13h3v7h-3z");
+  svg.append(path);
+  return svg;
+}
+
+$("back").addEventListener("click", goHome);
+
+// ---- sign-in ---------------------------------------------------------------
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("login-msg");
+  msg.className = "msg";
+  msg.textContent = "Signing in…";
+  try {
+    await getJSON("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: $("password").value }),
+    });
+    msg.textContent = "";
+    $("password").value = "";
+    goHome();
+  } catch (err) {
+    msg.className = "msg err";
+    msg.textContent = err.message;
+  }
+});
+
+// ---- playing -------------------------------------------------------------
+
+function render() {
+  document.body.classList.toggle("playing", !audio.paused);
+  const t = queue && queue.tracks[index];
+  document.body.classList.toggle("has-track", Boolean(t));
+  if (!t) return;
+  $("now-art").style.cssText = art(`/api/cover/${t.id}`);
+  $("now-title").textContent = t.title;
+  $("now-artist").textContent = t.artist;
+  if (shown && document.body.dataset.view === "list") renderSongs();
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: t.title, artist: t.artist, album: queue.name,
+      artwork: [{ src: `/api/cover/${t.id}`, sizes: "800x800", type: "image/jpeg" }],
+    });
+  }
+}
+
+function load(i, startAt = 0) {
+  if (!queue || !queue.tracks.length) return;
+  index = (i + queue.tracks.length) % queue.tracks.length;
+  audio.src = `/api/audio/${queue.tracks[index].id}`;
+  if (startAt) audio.addEventListener("loadedmetadata", () => { audio.currentTime = startAt; }, { once: true });
+  savePosition(startAt);
+  render();
+}
+
+function savePosition(time) {
+  if (queue && queue.tracks[index]) store.set("position", { list: queue.id, id: queue.tracks[index].id, time });
+}
+
+function playFrom(playlist, i) {
+  queue = { id: playlist.id, name: playlist.name, tracks: playlist.tracks };
+  load(i);
+  play();
+}
+
+function play() {
+  if (!queue || !queue.tracks.length) return;
+  if (!audio.src) load(index);
+  audio.play().catch((err) => console.warn("play blocked", err));
+}
+
+function toggle() { audio.paused ? play() : audio.pause(); }
+function next() { load(index + 1); play(); }
+function prev() {
+  if (audio.currentTime > RESTART_AFTER_S) { audio.currentTime = 0; return; }
+  load(index - 1);
+  play();
+}
+
+// the whole lion (mane included) plays and pauses, not just its face
+$("lion").addEventListener("click", toggle);
+$("next").addEventListener("click", next);
+$("prev").addEventListener("click", prev);
+audio.addEventListener("play", render);
+audio.addEventListener("pause", render);
+audio.addEventListener("ended", next);
+audio.addEventListener("error", () => { if (queue && queue.tracks.length > 1) next(); });
+
+let lastSave = 0;
+audio.addEventListener("timeupdate", () => {
+  if (Date.now() - lastSave < SAVE_EVERY_MS) return;
+  lastSave = Date.now();
+  savePosition(audio.currentTime);
+});
+
+if ("mediaSession" in navigator) {
+  navigator.mediaSession.setActionHandler("play", play);
+  navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+  navigator.mediaSession.setActionHandler("nexttrack", next);
+  navigator.mediaSession.setActionHandler("previoustrack", prev);
+}
+
+// ---- holding: the lock and the parents' door --------------------------------
+
+// Calls done() once `button` has been held for `ms`, filling its ring meanwhile.
+// Letting go early does nothing.
+function holdable(button, hint, ms, done) {
+  const ring = button.querySelector(".ring circle");
+  const length = 2 * Math.PI * 22;
+  ring.style.strokeDasharray = length;
+  ring.style.strokeDashoffset = length;
+  let start = 0;
+  let frame = 0;
+  const stop = () => {
+    cancelAnimationFrame(frame);
+    ring.style.strokeDashoffset = length;
+    hint.classList.remove("show");
+  };
+  const tick = () => {
+    const progress = Math.min((performance.now() - start) / ms, 1);
+    ring.style.strokeDashoffset = length * (1 - progress);
+    if (progress >= 1) { stop(); done(); return; }
+    frame = requestAnimationFrame(tick);
+  };
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) button.addEventListener(ev, stop);
+  button.addEventListener("contextmenu", (e) => e.preventDefault());
+  return () => { start = performance.now(); hint.classList.add("show"); frame = requestAnimationFrame(tick); };
+}
+
+// The lock: a tap locks; unlocking needs a hold. While locked a shield swallows
+// every touch except on the lock itself, and the music keeps playing.
+function setLocked(locked) {
+  document.body.classList.toggle("locked", locked);
+  $("lock").setAttribute("aria-label", locked ? "Hold to unlock" : "Lock screen");
+  store.set("locked", locked);
+}
+const holdToUnlock = holdable($("lock"), $("lock-hint"), UNLOCK_HOLD_MS, () => setLocked(false));
+$("lock").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  if (document.body.classList.contains("locked")) holdToUnlock();
+  else setLocked(true);
+});
+$("shield").addEventListener("pointerdown", (e) => e.preventDefault());
+
+const holdForParents = holdable($("badge"), $("parents-hint"), PARENTS_HOLD_MS, () => { show("parents"); loadParents(); });
+$("badge").addEventListener("pointerdown", (e) => { e.preventDefault(); holdForParents(); });
+
+// ---- parents' page ---------------------------------------------------------
+
+async function loadParents() {
+  let status;
+  try {
+    status = await getJSON("/api/parents/status");
+  } catch (err) {
+    if (err instanceof SignedOut) return signedOut();
+    $("parent-list").replaceChildren(el("p", { class: "msg err" }, "Couldn't reach the server."));
+    return;
+  }
+  const rows = status.playlists.map((p) => {
+    const waiting = p.missing.length;
+    const sub = `${p.count} of ${p.total} songs ready` + (waiting ? ` · ${waiting} waiting` : "");
+    const remove = el("button", { class: "pill soft" }, "Remove");
+    let armed = 0;
+    remove.addEventListener("click", async () => {
+      if (!armed) {
+        remove.textContent = "Tap again";
+        remove.classList.add("danger");
+        armed = setTimeout(() => { armed = 0; remove.textContent = "Remove"; remove.classList.remove("danger"); }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      await fetch(`/api/parents/playlists/${p.id}`, { method: "DELETE" });
+      loadParents();
+    });
+    const list = waiting
+      ? el("details", {}, el("summary", {}, "Songs not downloaded yet"),
+          el("ul", {}, ...p.missing.map((m) => el("li", {}, `${m.title} — ${m.artist}`))))
+      : "";
+    return el("div", { class: "row" },
+      el("div", { class: "text" }, el("div", { class: "t" }, p.name), el("div", { class: "a" }, sub), list),
+      remove);
+  });
+  $("parent-list").replaceChildren(...(rows.length ? rows : [el("p", { class: "msg" }, "None yet.")]));
+  const notes = [];
+  if (status.downloading) notes.push(`Downloading ${plural(status.downloading, "album")}.`);
+  if (status.failed.length) notes.push(`Couldn't find: ${status.failed.map((f) => f.album).join(", ")}.`);
+  $("dl-msg").textContent = notes.join(" ");
+}
+
+$("add-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("add-msg");
+  const link = $("add-link").value.trim();
+  if (!link) return;
+  msg.className = "msg";
+  msg.textContent = "Reading the playlist…";
+  try {
+    const out = await getJSON("/api/parents/playlists", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link }),
+    });
+    msg.textContent = `Added “${out.name}”. New songs download in the background.`;
+    $("add-link").value = "";
+    loadParents();
+  } catch (err) {
+    if (err instanceof SignedOut) return signedOut();
+    msg.className = "msg err";
+    msg.textContent = err.message;
+  }
+});
+
+// ---- start -----------------------------------------------------------------
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  const view = document.body.dataset.view;
+  if (view === "home") goHome();
+  else if (view === "list" && shown) openList(shown.id);
+});
+
+(async () => {
+  setLocked(Boolean(store.get("locked")));
+  await goHome();
+  if (document.body.dataset.view === "login") return;
+  const saved = store.get("position");
+  if (saved) {
+    try {
+      const p = await getJSON(`/api/playlist/${saved.list}`);
+      const at = p.tracks.findIndex((t) => t.id === saved.id);
+      if (at >= 0) { queue = { id: p.id, name: p.name, tracks: p.tracks }; load(at, saved.time || 0); }
+    } catch { /* that playlist is gone: start fresh */ }
+  }
+  if (store.get("view") === "list" && store.get("list")) await openList(store.get("list"));
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((err) => console.warn("no offline cache", err));
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,682 @@
+//! Gets missing playlist songs downloaded, album by album.
+//!
+//! Runs only when the player notices songs that are not in the library yet
+//! (`kick`), never on a timer. Each song's album is learned from Spotify once and
+//! remembered. Then, per album:
+//!
+//! 1. Lidarr: find the album in its catalogue (name and year must agree),
+//!    monitor it, and run Lidarr's own search.
+//! 2. If that grabbed nothing: search the indexers through Prowlarr by
+//!    Spotify's album name, and offer the best few releases to Lidarr under a
+//!    clean "Artist - Album (Year)" name. Lidarr still decides whether a release
+//!    really is that album, so a wrong pick is rejected rather than imported.
+//!    Soundtracks need this: their catalogue names ("Encanto (2021 film
+//!    soundtrack, English version)") never match how torrents are named.
+//!
+//! An album that got nowhere is retried on a later kick, at most every
+//! `RETRY_AFTER`.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+
+use crate::{
+    Error, Result,
+    spotify::{Spotify, Track, TrackAlbum},
+    store::JsonStore,
+    text::{core, overlap, words},
+};
+
+const RETRY_AFTER: Duration = Duration::from_secs(6 * 3600);
+/// Pause between Spotify song-page reads, to stay a polite visitor.
+const SPOTIFY_GAP: Duration = Duration::from_millis(500);
+/// How long Lidarr's own album search may run before we fall back.
+const LIDARR_SEARCH_WAIT: Duration = Duration::from_secs(180);
+const LIDARR_POLL: Duration = Duration::from_secs(5);
+/// Releases offered to Lidarr per album in the fallback before giving up for now.
+const FALLBACK_TRIES: usize = 3;
+/// Catalogue match: share of identifying title words that must agree.
+const MIN_OVERLAP: f64 = 0.6;
+/// Lidarr's API answers slowly while it talks to its metadata server.
+const API_TIMEOUT: Duration = Duration::from_secs(90);
+/// A release naming one of these is another language's edition, unless the album does.
+const LANGUAGES: &[&str] = &[
+    "russian",
+    "korean",
+    "japanese",
+    "french",
+    "spanish",
+    "latino",
+    "latin",
+    "portuguese",
+    "german",
+    "italian",
+    "hindi",
+    "tamil",
+    "telugu",
+    "polish",
+    "dutch",
+    "chinese",
+    "mandarin",
+    "cantonese",
+    "thai",
+    "vietnamese",
+    "indonesian",
+    "malay",
+    "turkish",
+    "arabic",
+    "hebrew",
+];
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AlbumState {
+    #[default]
+    Failed,
+    Downloading,
+    Imported,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AlbumRecord {
+    pub state: AlbumState,
+    pub album: String,
+    #[serde(default)]
+    pub lidarr_album_id: Option<i64>,
+    #[serde(default)]
+    pub note: String,
+    /// Unix seconds of the last attempt.
+    pub tried: u64,
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The catalogue entry that is this Spotify album: identifying words must mostly
+/// agree and the year may differ by one at most.
+pub fn pick_catalogue<'a>(info: &TrackAlbum, candidates: &'a [Value]) -> Option<&'a Value> {
+    let year: Option<i32> = info.year.as_deref().and_then(|y| y.parse().ok());
+    candidates
+        .iter()
+        .filter_map(|c| {
+            let title = c["title"].as_str()?;
+            let score = overlap(&info.album, title);
+            let their_year: Option<i32> = c["releaseDate"]
+                .as_str()
+                .and_then(|d| d.get(..4)?.parse().ok());
+            let year_ok = match (year, their_year) {
+                (Some(a), Some(b)) => (a - b).abs() <= 1,
+                _ => true,
+            };
+            (score >= MIN_OVERLAP && year_ok).then_some((score, c))
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, c)| c)
+}
+
+/// Indexer results that look like this album, best first: the right edition,
+/// then lossy over lossless (smaller, and what the kid's iPad caches), then seeders.
+pub fn rank_releases<'a>(album: &str, results: &'a [Value]) -> Vec<&'a Value> {
+    let album_words: BTreeSet<String> = words(album).into_iter().collect();
+    let want = core(album);
+    let deluxe = album_words.contains("deluxe");
+    let mut picks: Vec<(bool, bool, u64, &Value)> = results
+        .iter()
+        .filter_map(|r| {
+            let title = r["title"].as_str()?;
+            let seeders = r["seeders"].as_u64().unwrap_or(0);
+            let title_words: BTreeSet<String> = words(title).into_iter().collect();
+            if seeders < 1 || !want.is_subset(&title_words) {
+                return None;
+            }
+            // "Moana 2" is not "Moana": a number right after one of the album's own
+            // words, which the album name doesn't have. Other numbers ("24-96 FLAC",
+            // "320kbps") describe the files, not the album.
+            let ordered = words(title);
+            let sequel = ordered.windows(2).any(|pair| {
+                want.contains(&pair[0])
+                    && pair[1].len() < 4
+                    && pair[1].chars().all(|c| c.is_ascii_digit())
+                    && !album_words.contains(&pair[1])
+            });
+            let other_language = LANGUAGES
+                .iter()
+                .any(|l| title_words.contains(*l) && !album_words.contains(*l));
+            if sequel || other_language {
+                return None;
+            }
+            // uploaders abbreviate Deluxe Edition as "D E"
+            let is_deluxe = title_words.contains("deluxe") || title.to_lowercase().contains("d e)");
+            Some((
+                is_deluxe == deluxe,
+                !title_words.contains("flac"),
+                seeders,
+                r,
+            ))
+        })
+        .collect();
+    picks.sort_by_key(|p| std::cmp::Reverse((p.0, p.1, p.2)));
+    picks.into_iter().map(|p| p.3).collect()
+}
+
+struct Arr {
+    client: reqwest::Client,
+    url: String,
+    key: String,
+}
+
+impl Arr {
+    async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let mut req = self
+            .client
+            .request(method, format!("{}/api/v1{path}", self.url))
+            .header("X-Api-Key", &self.key)
+            .query(query);
+        if let Some(body) = body {
+            req = req.json(&body);
+        }
+        let res = req.send().await?;
+        let status = res.status();
+        let text = res.text().await?;
+        if !status.is_success() {
+            return Err(Error::Upstream(format!(
+                "{path}: {status} {}",
+                text.chars().take(300).collect::<String>()
+            )));
+        }
+        Ok(if text.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_str(&text)?
+        })
+    }
+
+    async fn get(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
+        self.call(reqwest::Method::GET, path, query, None).await
+    }
+
+    async fn post(&self, path: &str, body: Value) -> Result<Value> {
+        self.call(reqwest::Method::POST, path, &[], Some(body))
+            .await
+    }
+
+    async fn put(&self, path: &str, body: Value) -> Result<Value> {
+        self.call(reqwest::Method::PUT, path, &[], Some(body)).await
+    }
+}
+
+pub struct IngestConfig {
+    pub lidarr_url: String,
+    pub lidarr_key: String,
+    pub prowlarr_url: String,
+    pub prowlarr_key: String,
+    pub music_root: String,
+}
+
+#[derive(Clone)]
+pub struct Ingester {
+    tx: mpsc::UnboundedSender<Vec<Track>>,
+    albums: Arc<Mutex<JsonStore<BTreeMap<String, AlbumRecord>>>>,
+}
+
+impl Ingester {
+    pub fn start(cfg: IngestConfig, state_dir: &Path, spotify: Spotify) -> Result<Self> {
+        let client = reqwest::Client::builder().timeout(API_TIMEOUT).build()?;
+        let albums = Arc::new(Mutex::new(JsonStore::load(state_dir, "albums.json")));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let worker = Worker {
+            lidarr: Arr {
+                client: client.clone(),
+                url: cfg.lidarr_url,
+                key: cfg.lidarr_key,
+            },
+            prowlarr: Arr {
+                client,
+                url: cfg.prowlarr_url.clone(),
+                key: cfg.prowlarr_key,
+            },
+            prowlarr_url: cfg.prowlarr_url,
+            music_root: cfg.music_root,
+            spotify,
+            albums_of: JsonStore::load(state_dir, "track-albums.json"),
+            albums: albums.clone(),
+        };
+        tokio::spawn(worker.run(rx));
+        Ok(Self { tx, albums })
+    }
+
+    /// Queue songs that are not in the library yet.
+    pub fn kick(&self, tracks: Vec<Track>) {
+        if self.tx.send(tracks).is_err() {
+            warn!("ingest: worker has stopped; songs not queued");
+        }
+    }
+
+    pub fn albums(&self) -> BTreeMap<String, AlbumRecord> {
+        self.albums
+            .lock()
+            .map(|a| a.data.clone())
+            .unwrap_or_default()
+    }
+}
+
+struct Worker {
+    lidarr: Arr,
+    prowlarr: Arr,
+    prowlarr_url: String,
+    music_root: String,
+    spotify: Spotify,
+    albums_of: JsonStore<BTreeMap<String, TrackAlbum>>,
+    albums: Arc<Mutex<JsonStore<BTreeMap<String, AlbumRecord>>>>,
+}
+
+impl Worker {
+    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Vec<Track>>) {
+        while let Some(first) = rx.recv().await {
+            // Everything queued meanwhile goes into the same batch.
+            let mut batch: BTreeMap<String, Track> =
+                first.into_iter().map(|t| (t.uri.clone(), t)).collect();
+            while let Ok(more) = rx.try_recv() {
+                batch.extend(more.into_iter().map(|t| (t.uri.clone(), t)));
+            }
+            self.process(batch.into_values().collect()).await;
+        }
+    }
+
+    async fn process(&mut self, tracks: Vec<Track>) {
+        let mut wanted: BTreeMap<String, TrackAlbum> = BTreeMap::new();
+        for t in tracks {
+            let info = match self.albums_of.data.get(&t.uri) {
+                Some(info) => info.clone(),
+                None => {
+                    let found = self.spotify.track_album(&t.uri).await;
+                    tokio::time::sleep(SPOTIFY_GAP).await;
+                    match found {
+                        Ok(info) => {
+                            self.albums_of.data.insert(t.uri.clone(), info.clone());
+                            if let Err(err) = self.albums_of.save() {
+                                warn!("ingest: could not save song albums: {err}");
+                            }
+                            info
+                        }
+                        Err(err) => {
+                            warn!("ingest: album of {:?} unknown: {err}", t.title);
+                            continue;
+                        }
+                    }
+                }
+            };
+            let key = format!("{}|{}", info.album, info.year.as_deref().unwrap_or(""));
+            wanted.entry(key).or_insert(info);
+        }
+        for (key, info) in wanted {
+            let rec = self
+                .albums
+                .lock()
+                .ok()
+                .and_then(|a| a.data.get(&key).cloned());
+            if let Some(rec) = &rec {
+                match rec.state {
+                    AlbumState::Imported => continue,
+                    AlbumState::Downloading if self.still_downloading(&key, rec).await => continue,
+                    _ if now().saturating_sub(rec.tried) < RETRY_AFTER.as_secs() => continue,
+                    _ => {}
+                }
+            }
+            self.fetch_album(&key, &info).await;
+        }
+    }
+
+    fn record(
+        &self,
+        key: &str,
+        state: AlbumState,
+        album: &str,
+        lidarr_album_id: Option<i64>,
+        note: &str,
+    ) {
+        info!("ingest: {key}: {state:?} {note}");
+        if let Ok(mut albums) = self.albums.lock() {
+            albums.data.insert(
+                key.to_string(),
+                AlbumRecord {
+                    state,
+                    album: album.to_string(),
+                    lidarr_album_id,
+                    note: note.to_string(),
+                    tried: now(),
+                },
+            );
+            if let Err(err) = albums.save() {
+                warn!("ingest: could not save album states: {err}");
+            }
+        }
+    }
+
+    /// Re-checks an album marked downloading. False once it has vanished from
+    /// Lidarr's queue without files, so it gets retried.
+    async fn still_downloading(&self, key: &str, rec: &AlbumRecord) -> bool {
+        let Some(id) = rec.lidarr_album_id else {
+            return false;
+        };
+        match self.lidarr.get(&format!("/album/{id}"), &[]).await {
+            Ok(album) if album["statistics"]["trackFileCount"].as_u64().unwrap_or(0) > 0 => {
+                self.record(key, AlbumState::Imported, &rec.album, Some(id), "");
+                true
+            }
+            Ok(_) => self.queued(id).await.unwrap_or(true),
+            Err(err) => {
+                warn!("ingest: {key}: could not re-check: {err}");
+                true // unknown: leave it for the next kick
+            }
+        }
+    }
+
+    async fn fetch_album(&self, key: &str, info: &TrackAlbum) {
+        let album = match self.catalogue_album(info).await {
+            Ok(Some(album)) => album,
+            Ok(None) => {
+                return self.record(
+                    key,
+                    AlbumState::Failed,
+                    &info.album,
+                    None,
+                    "not in Lidarr's catalogue",
+                );
+            }
+            Err(err) => {
+                return self.record(
+                    key,
+                    AlbumState::Failed,
+                    &info.album,
+                    None,
+                    &format!("Lidarr lookup failed: {err}"),
+                );
+            }
+        };
+        let id = album["id"].as_i64();
+        let title = album["title"].as_str().unwrap_or(&info.album).to_string();
+        if album["statistics"]["trackFileCount"].as_u64().unwrap_or(0) > 0 {
+            return self.record(key, AlbumState::Imported, &title, id, "already downloaded");
+        }
+        let Some(id) = id else {
+            return self.record(
+                key,
+                AlbumState::Failed,
+                &title,
+                None,
+                "Lidarr gave no album id",
+            );
+        };
+        let grabbed = match self.lidarr_search(id).await {
+            Ok(true) => true,
+            Ok(false) => self.fallback(&album, info).await,
+            Err(err) => {
+                warn!("ingest: {key}: Lidarr search failed: {err}");
+                self.fallback(&album, info).await
+            }
+        };
+        if grabbed {
+            self.record(key, AlbumState::Downloading, &title, Some(id), "");
+        } else {
+            self.record(
+                key,
+                AlbumState::Failed,
+                &title,
+                Some(id),
+                "no release found",
+            );
+        }
+    }
+
+    /// The album in Lidarr, added (and monitored) if it wasn't there.
+    async fn catalogue_album(&self, info: &TrackAlbum) -> Result<Option<Value>> {
+        let found = self
+            .lidarr
+            .get("/album/lookup", &[("term", &info.album)])
+            .await?;
+        let Some(cand) = found
+            .as_array()
+            .and_then(|c| pick_catalogue(info, c))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let foreign = cand["foreignAlbumId"].as_str().unwrap_or_default();
+        let existing = self
+            .lidarr
+            .get("/album", &[("foreignAlbumId", foreign)])
+            .await?;
+        if let Some(album) = existing.as_array().and_then(|a| a.first()).cloned() {
+            if !album["monitored"].as_bool().unwrap_or(false) {
+                self.lidarr
+                    .put(
+                        "/album/monitor",
+                        json!({ "albumIds": [album["id"]], "monitored": true }),
+                    )
+                    .await?;
+            }
+            return Ok(Some(album));
+        }
+        let artist_id = cand["artist"]["foreignArtistId"]
+            .as_str()
+            .unwrap_or_default();
+        let artists = self.lidarr.get("/artist", &[]).await?;
+        let artist = match artists
+            .as_array()
+            .and_then(|a| a.iter().find(|x| x["foreignArtistId"] == artist_id))
+        {
+            Some(artist) => artist.clone(),
+            None => {
+                let quality = self.lidarr.get("/qualityprofile", &[]).await?[0]["id"].clone();
+                let metadata = self.lidarr.get("/metadataprofile", &[]).await?[0]["id"].clone();
+                let mut artist = cand["artist"].clone();
+                artist["qualityProfileId"] = quality;
+                artist["metadataProfileId"] = metadata;
+                artist["rootFolderPath"] = json!(self.music_root);
+                artist["monitored"] = json!(true);
+                artist["monitorNewItems"] = json!("none");
+                artist["addOptions"] =
+                    json!({ "monitor": "none", "searchForMissingAlbums": false });
+                artist
+            }
+        };
+        let mut body = cand;
+        body["monitored"] = json!(true);
+        body["artist"] = artist;
+        body["addOptions"] = json!({ "searchForNewAlbum": false });
+        Ok(Some(self.lidarr.post("/album", body).await?))
+    }
+
+    /// Lidarr's own search; true if it grabbed a release.
+    async fn lidarr_search(&self, album_id: i64) -> Result<bool> {
+        let cmd = self
+            .lidarr
+            .post(
+                "/command",
+                json!({ "name": "AlbumSearch", "albumIds": [album_id] }),
+            )
+            .await?;
+        let cmd_id = cmd["id"].as_i64().unwrap_or_default();
+        let deadline = tokio::time::Instant::now() + LIDARR_SEARCH_WAIT;
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(LIDARR_POLL).await;
+            let status = self.lidarr.get(&format!("/command/{cmd_id}"), &[]).await?;
+            if matches!(
+                status["status"].as_str(),
+                Some("completed" | "failed" | "aborted")
+            ) {
+                break;
+            }
+        }
+        self.queued(album_id).await
+    }
+
+    async fn queued(&self, album_id: i64) -> Result<bool> {
+        let queue = self.lidarr.get("/queue", &[("pageSize", "200")]).await?;
+        Ok(queue["records"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|q| q["albumId"].as_i64() == Some(album_id))))
+    }
+
+    /// Offers indexer releases named like Spotify's album to Lidarr; true if one was taken.
+    async fn fallback(&self, album: &Value, info: &TrackAlbum) -> bool {
+        let query = words(&info.album).join(" ");
+        let results = match self
+            .prowlarr
+            .get(
+                "/search",
+                &[
+                    ("query", &query),
+                    ("type", "search"),
+                    ("categories", "3000"),
+                ],
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(err) => {
+                warn!("ingest: indexer search for {:?} failed: {err}", info.album);
+                return false;
+            }
+        };
+        let results = results.as_array().cloned().unwrap_or_default();
+        let artist = album["artist"]["artistName"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| {
+                info.artists
+                    .split(',')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            });
+        let title = album["title"].as_str().unwrap_or(&info.album);
+        let year = album["releaseDate"]
+            .as_str()
+            .and_then(|d| d.get(..4))
+            .or(info.year.as_deref())
+            .unwrap_or("");
+        for r in rank_releases(&info.album, &results)
+            .into_iter()
+            .take(FALLBACK_TRIES)
+        {
+            let raw_title = r["title"].as_str().unwrap_or_default();
+            let format = if words(raw_title).iter().any(|w| w == "flac") {
+                "FLAC"
+            } else {
+                "MP3"
+            };
+            let clean = format!("{artist} - {title} ({year}) [{format}]");
+            // Prowlarr hands out links to itself as localhost; Lidarr reaches it by name.
+            let url = r["downloadUrl"]
+                .as_str()
+                .map(|u| u.replace("http://localhost:9696", &self.prowlarr_url));
+            let push = json!({
+                "title": clean, "downloadUrl": url, "magnetUrl": r["magnetUrl"], "protocol": "torrent",
+                "publishDate": r["publishDate"], "indexer": r["indexer"], "size": r["size"], "seeders": r["seeders"],
+            });
+            match self.lidarr.post("/release/push", push).await {
+                Ok(out) => {
+                    let decision = if out.is_array() { out[0].clone() } else { out };
+                    if decision["approved"].as_bool() == Some(true) {
+                        info!("ingest: fallback took {raw_title:?} as {clean:?}");
+                        return true;
+                    }
+                    info!(
+                        "ingest: fallback {raw_title:?} rejected: {}",
+                        decision["rejections"]
+                    );
+                }
+                Err(err) => warn!("ingest: push {clean:?} refused: {err}"),
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn album(name: &str, year: &str) -> TrackAlbum {
+        TrackAlbum {
+            album: name.into(),
+            year: Some(year.into()),
+            artists: String::new(),
+        }
+    }
+
+    #[test]
+    fn catalogue_match_needs_name_and_year() {
+        let candidates = vec![
+            json!({"title": "Mouna Geethangal (Original Motion Picture Soundtrack)", "releaseDate": "1981-01-01"}),
+            json!({"title": "Moana 2 (Original Score)", "releaseDate": "2025-01-01"}),
+            json!({"title": "Moana: Original Motion Picture Soundtrack", "releaseDate": "2016-11-18"}),
+        ];
+        let info = album(
+            "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+            "2016",
+        );
+        let picked = pick_catalogue(&info, &candidates).unwrap();
+        assert_eq!(picked["title"], "Moana: Original Motion Picture Soundtrack");
+        let wrong_year = album(
+            "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+            "1990",
+        );
+        assert!(pick_catalogue(&wrong_year, &candidates).is_none());
+    }
+
+    #[test]
+    fn releases_skip_sequels_and_other_languages() {
+        let results = vec![
+            json!({"title": "Moana 2 (Original Motion Picture Soundtrack) (2024) FLAC", "seeders": 19}),
+            json!({"title": "Various Artists Moana 2 (Russian Original Motion Picture Soundtrack) (2024) Mp3", "seeders": 1}),
+            json!({"title": "Moana (Original Motion Picture Soundtrack) (2020) Mp3 [PMEDIA]", "seeders": 8}),
+            json!({"title": "VA Moana Original Motion Picture Soundtrack (Deluxe Edition) (2017) [24 96 FLAC]", "seeders": 10}),
+            json!({"title": "Moana: Original Motion Picture Soundtrack ( D E) [24-96 FLAC]", "seeders": 2}),
+            json!({"title": "Moana Soundtrack dead swarm", "seeders": 0}),
+        ];
+        let ranked = rank_releases(
+            "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+            &results,
+        );
+        let titles: Vec<&str> = ranked
+            .iter()
+            .map(|r| r["title"].as_str().unwrap())
+            .collect();
+        // deluxe first (most seeders), standard edition last; no sequel, no Russian, no dead swarm
+        assert_eq!(titles.len(), 3);
+        assert!(titles[0].contains("Deluxe Edition"));
+        assert!(titles[1].contains("D E"));
+        assert!(titles[2].contains("(2020) Mp3"));
+    }
+
+    #[test]
+    fn plain_albums_prefer_mp3() {
+        let results = vec![
+            json!({"title": "Lin Manuel Miranda Encanto (Original Motion Picture Soundtrack) (2021) FLAC", "seeders": 18}),
+            json!({"title": "Lin Manuel Miranda Encanto (Original Motion Picture Soundtrack) (2021) Mp3 320kbps", "seeders": 8}),
+        ];
+        let ranked = rank_releases("Encanto (Original Motion Picture Soundtrack)", &results);
+        assert!(ranked[0]["title"].as_str().unwrap().contains("Mp3"));
+    }
+}
