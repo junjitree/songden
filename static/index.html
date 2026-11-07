@@ -54,7 +54,8 @@
     background: var(--bg); z-index: 3;
   }
   .badge { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 800; padding: 4px 8px 4px 4px; }
-  .badge .icon { font-size: 24px; }
+  /* the app icon's lion, drawn from the same shapes (tools/make_icons.py) */
+  .badge .logo { width: 34px; height: 34px; flex: none; }
   .back { display: none; align-items: center; gap: 2px; font-size: 19px; font-weight: 800; padding: 8px 14px 8px 4px; border-radius: 24px; background: var(--button); box-shadow: 0 3px 8px var(--shadow); }
   .back svg { width: 28px; }
   .back:active { background: var(--button-press); }
@@ -205,7 +206,7 @@
 </head>
 <body data-view="home">
 <header class="topbar">
-  <div class="badge"><span class="icon">🦁</span>{{title}}</div>
+  <div class="badge"><svg class="logo" viewBox="0.1 0.12 0.8 0.8" aria-hidden="true"><g fill="var(--mane)"><circle cx="0.5" cy="0.52" r="0.31"/><circle cx="0.8100" cy="0.5200" r="0.075"/><circle cx="0.7864" cy="0.6386" r="0.075"/><circle cx="0.7192" cy="0.7392" r="0.075"/><circle cx="0.6186" cy="0.8064" r="0.075"/><circle cx="0.5000" cy="0.8300" r="0.075"/><circle cx="0.3814" cy="0.8064" r="0.075"/><circle cx="0.2808" cy="0.7392" r="0.075"/><circle cx="0.2136" cy="0.6386" r="0.075"/><circle cx="0.1900" cy="0.5200" r="0.075"/><circle cx="0.2136" cy="0.4014" r="0.075"/><circle cx="0.2808" cy="0.3008" r="0.075"/><circle cx="0.3814" cy="0.2336" r="0.075"/><circle cx="0.5000" cy="0.2100" r="0.075"/><circle cx="0.6186" cy="0.2336" r="0.075"/><circle cx="0.7192" cy="0.3008" r="0.075"/><circle cx="0.7864" cy="0.4014" r="0.075"/><circle cx="0.33" cy="0.33" r="0.085"/><circle cx="0.67" cy="0.33" r="0.085"/></g><g fill="var(--face)"><circle cx="0.33" cy="0.33" r="0.055"/><circle cx="0.67" cy="0.33" r="0.055"/><circle cx="0.5" cy="0.52" r="0.22"/></g><g fill="var(--ink)"><circle cx="0.42" cy="0.48" r="0.028"/><circle cx="0.58" cy="0.48" r="0.028"/><path d="M0.455 0.56h0.09l-0.045 0.055z"/></g></svg>{{title}}</div>
   <button class="back" id="back" aria-label="Back">
     <svg viewBox="0 0 24 24"><path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg><span>Back</span>
   </button>

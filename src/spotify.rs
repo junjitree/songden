@@ -41,7 +41,7 @@ pub struct Track {
     pub explicit: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Playlist {
     pub name: String,
     pub cover: Option<String>,

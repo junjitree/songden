@@ -58,8 +58,11 @@ Spotify (public pages)      Jellyfin           Lidarr + Prowlarr
   must be public. Spotify's embed page lists at most 100 songs.
 - **The device only ever talks to songden.** songden holds the Jellyfin, Lidarr
   and Prowlarr keys and serves only songs that are on a current playlist.
-- **Nothing runs on a timer.** Playlists are re-read when the app asks for them
-  (at most every 5 minutes), and missing songs are fetched then.
+- **Spotify is read only when a grown-up asks:** adding a playlist, or "Check
+  for new songs" on the grown-ups' page. The listener's playlists never change
+  under them by themselves. Songs that finish downloading still appear on their
+  own: while a playlist has songs waiting, opening the app re-checks the library
+  (not Spotify), at most every 5 minutes. Nothing runs on a timer.
 
 ## Running it
 

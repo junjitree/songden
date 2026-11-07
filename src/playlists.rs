@@ -1,9 +1,15 @@
 //! The playlist links, and each playlist matched against the library.
 //!
-//! A playlist is re-read from Spotify when it is asked for and its copy is older
-//! than `TTL` (no timer). Songs not in the library are left out and handed to the
-//! ingester. The last good copy is kept on disk, so the player still works when
-//! Spotify or the internet is unreachable.
+//! Spotify is read only when a grown-up adds a playlist or asks for a check
+//! (`force`), never on its own: the listener's playlists change when a grown-up
+//! decides. Spotify's song list is kept (`playlist-spotify.json`) and matched
+//! against the library; songs not in it yet are handed to the ingester.
+//!
+//! The library side is re-checked without Spotify: when a playlist with songs
+//! still waiting is asked for, at most every `LIBRARY_RECHECK`, its kept song
+//! list is matched again, so finished downloads appear by themselves. The last
+//! good copy of everything is on disk, so the player works when Spotify or the
+//! internet is unreachable.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -16,9 +22,16 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{Result, ingest::Ingester, jellyfin::Jellyfin, spotify::Spotify, store::JsonStore};
+use crate::{
+    Result,
+    ingest::Ingester,
+    jellyfin::Jellyfin,
+    spotify::{self, Spotify},
+    store::JsonStore,
+};
 
-const TTL: Duration = Duration::from_secs(300);
+/// How often a playlist with songs still waiting is matched against the library again.
+const LIBRARY_RECHECK: Duration = Duration::from_secs(300);
 
 /// The pattern for a playlist name prefix ("Mia - Moana" with prefix "Mia"):
 /// the word itself, then a dash, colon or bar.
@@ -80,7 +93,10 @@ pub fn display_name(prefix: Option<&Regex>, spotify_name: &str) -> String {
 pub struct Playlists {
     order: Mutex<JsonStore<Order>>,
     cache: Mutex<JsonStore<BTreeMap<String, Resolved>>>,
-    fetched: Mutex<HashMap<String, Instant>>,
+    /// Each playlist as Spotify last gave it.
+    from_spotify: Mutex<JsonStore<BTreeMap<String, spotify::Playlist>>>,
+    /// When each playlist was last matched against the library.
+    matched: Mutex<HashMap<String, Instant>>,
     prefix: Option<Regex>,
     spotify: Spotify,
     jellyfin: Jellyfin,
@@ -99,7 +115,8 @@ impl Playlists {
             prefix: prefix.map(prefix_pattern),
             order: Mutex::new(JsonStore::load(state_dir, "playlists.json")),
             cache: Mutex::new(JsonStore::load(state_dir, "playlist-cache.json")),
-            fetched: Mutex::new(HashMap::new()),
+            from_spotify: Mutex::new(JsonStore::load(state_dir, "playlist-spotify.json")),
+            matched: Mutex::new(HashMap::new()),
             spotify,
             jellyfin,
             ingest,
@@ -137,29 +154,91 @@ impl Playlists {
             order.data.order.retain(|i| i != id);
             order.save()?;
         }
+        {
+            let mut kept = self.from_spotify.lock().map_err(poisoned)?;
+            kept.data.remove(id);
+            kept.save()?;
+        }
         let mut cache = self.cache.lock().map_err(poisoned)?;
         cache.data.remove(id);
         cache.save()
     }
 
-    /// The playlist matched against the library, re-read when stale.
+    /// The playlist matched against the library. `force` (a grown-up's check, or
+    /// a playlist never read) reads Spotify; otherwise only the library is
+    /// re-checked, and only while songs are waiting.
     pub async fn get(&self, id: &str, force: bool) -> Option<Resolved> {
-        let stale = {
-            let mut fetched = self.fetched.lock().ok()?;
-            let stale = force || fetched.get(id).is_none_or(|at| at.elapsed() >= TTL);
-            if stale {
-                fetched.insert(id.to_string(), Instant::now());
-            }
-            stale
+        let known = self.from_spotify.lock().ok()?.data.contains_key(id);
+        let result = if force || !known {
+            self.read_spotify(id).await
+        } else if self.recheck_due(id) {
+            self.match_library(id).await
+        } else {
+            Ok(())
         };
-        if stale && let Err(err) = self.refresh(id).await {
+        if let Err(err) = result {
             warn!("playlist {id}: refresh failed, keeping the last good copy: {err}");
         }
         self.cache.lock().ok()?.data.get(id).cloned()
     }
 
-    async fn refresh(&self, id: &str) -> Result<()> {
+    /// Whether a playlist has songs waiting and wasn't matched in the last
+    /// `LIBRARY_RECHECK`; marks it matched now if so.
+    fn recheck_due(&self, id: &str) -> bool {
+        let waiting = self
+            .cache
+            .lock()
+            .ok()
+            .and_then(|c| c.data.get(id).map(|p| !p.missing.is_empty()))
+            .unwrap_or(false);
+        let Ok(mut matched) = self.matched.lock() else {
+            return false;
+        };
+        let due = waiting
+            && matched
+                .get(id)
+                .is_none_or(|at| at.elapsed() >= LIBRARY_RECHECK);
+        if due {
+            matched.insert(id.to_string(), Instant::now());
+        }
+        due
+    }
+
+    /// Reads the playlist from Spotify, keeps it, matches it, and hands songs not
+    /// in the library to the ingester.
+    async fn read_spotify(&self, id: &str) -> Result<()> {
+        info!("playlist {id}: reading Spotify");
         let raw = self.spotify.playlist(id).await?;
+        {
+            let mut kept = self.from_spotify.lock().map_err(poisoned)?;
+            kept.data.insert(id.to_string(), raw.clone());
+            kept.save()?;
+        }
+        let missing = self.resolve(id, &raw).await?;
+        if !missing.is_empty() {
+            self.ingest.kick(missing);
+        }
+        Ok(())
+    }
+
+    /// Matches the kept Spotify song list against the library again.
+    async fn match_library(&self, id: &str) -> Result<()> {
+        let raw = self
+            .from_spotify
+            .lock()
+            .map_err(poisoned)?
+            .data
+            .get(id)
+            .cloned();
+        match raw {
+            Some(raw) => self.resolve(id, &raw).await.map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
+    /// Matches a Spotify song list against the library and stores the result;
+    /// returns the songs not in the library.
+    async fn resolve(&self, id: &str, raw: &spotify::Playlist) -> Result<Vec<spotify::Track>> {
         let mut tracks = Vec::new();
         let mut missing = Vec::new();
         for t in &raw.tracks {
@@ -183,8 +262,8 @@ impl Playlists {
         let resolved = Resolved {
             id: id.to_string(),
             name: display_name(self.prefix.as_ref(), &raw.name),
-            spotify_name: raw.name,
-            cover: raw.cover,
+            spotify_name: raw.name.clone(),
+            cover: raw.cover.clone(),
             total: raw.tracks.len(),
             missing: missing
                 .iter()
@@ -195,18 +274,12 @@ impl Playlists {
                 .collect(),
             tracks,
         };
-        {
-            let mut cache = self.cache.lock().map_err(poisoned)?;
-            cache.data.insert(id.to_string(), resolved);
-            cache.save()?;
-        }
-        if !missing.is_empty() {
-            self.ingest.kick(missing);
-        }
-        Ok(())
+        let mut cache = self.cache.lock().map_err(poisoned)?;
+        cache.data.insert(id.to_string(), resolved);
+        cache.save()?;
+        Ok(missing)
     }
 
-    /// Every playlist in order, refreshed if stale.
     /// Every playlist in order; `force` re-reads each from Spotify now.
     pub async fn all(&self, force: bool) -> Vec<(String, Option<Resolved>)> {
         let mut out = Vec::new();
