@@ -507,6 +507,27 @@ for (const host of [$("bar-controls"), $("p-controls")]) {
 }
 audio.addEventListener("play", render);
 audio.addEventListener("pause", render);
+
+// Keep the screen on while music plays, so the device doesn't lock mid-song; let
+// it sleep again when paused. The system drops the lock whenever the app is
+// hidden, so it is asked for again on coming back.
+let wakeLock = null;
+async function holdScreen() {
+  if (!("wakeLock" in navigator) || wakeLock || audio.paused || document.hidden) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (err) {
+    console.warn("screen may lock while playing", err);
+  }
+}
+function releaseScreen() {
+  if (wakeLock) wakeLock.release().catch(() => {});
+}
+audio.addEventListener("playing", holdScreen);
+audio.addEventListener("pause", releaseScreen);
+audio.addEventListener("ended", releaseScreen);
+document.addEventListener("visibilitychange", holdScreen);
 audio.addEventListener("ended", next);
 // A song that can't play is skipped, but only once round the playlist: offline with
 // nothing saved yet, every song fails, and skipping on would loop forever.
