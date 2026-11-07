@@ -82,6 +82,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Saved songs are answered in byte ranges and dropped once they leave every
   playlist. Offline, a playlist with no saved songs is dimmed and can't be
   tapped.
+- State files, including the session tokens in `sessions.json`, are readable
+  only by their owner.
 - `LISTENER` and `PLAYLIST_PREFIX` settings for the app's name, the title and
   the playlist-name prefix trimmed on tiles.
 - `songden hash-password` to hash the family password from stdin.

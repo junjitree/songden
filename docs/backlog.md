@@ -31,9 +31,6 @@ What is not done, and why. Delete an entry when it ships.
   listener. Revisit if a second, separate grown-up secret is ever needed.
 - **Songs are fetched one at a time,** each with a search that looks up every
   result's length (several seconds), so a big new playlist takes a while.
-- **State files are world-readable inside the container** (`sessions.json` holds
-  live session tokens). Only matters if something else shares the state
-  directory; writing them `0600` would close it.
 - **A restart drops the fetch queue.** Nothing resumes on its own; the next
   "Check for new songs" (or added playlist) queues what is still missing.
 
