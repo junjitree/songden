@@ -16,6 +16,13 @@ What is not done, and why. Delete an entry when it ships.
   tap needs no network), the iOS 27 status-bar fix (needs the app re-added to
   the home screen to apply).
 
+- **lyon.junji.sh's isolation has not been through a reboot of its host.** On
+  the media CT, `songden-firewall.service` (`/usr/local/sbin/songden-firewall`)
+  blocks the container's `br-songden` network from anything private, and is
+  ordered before Docker. It was tested live but neither Docker nor the CT was
+  restarted. After the next one, confirm from inside the container that a
+  private address such as the gateway is refused.
+
 ## Known gaps
 
 - **yt-dlp depends on YouTube's current behaviour.** Without the newest yt-dlp
